@@ -142,13 +142,13 @@ def extract_chapters(epub_path: Path) -> Generator[Chapter, None, None]:
 - `src/vocab/__init__.py` (exports)
 
 ### Acceptance Criteria
-- [ ] `extract_chapters()` yields `Chapter` objects in reading order
-- [ ] Chapter text has HTML stripped, whitespace normalized
-- [ ] Chapter titles extracted from TOC or heading tags when available
-- [ ] Works with epub2 and epub3 formats
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run mypy src` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `extract_chapters()` yields `Chapter` objects in reading order
+- [x] Chapter text has HTML stripped, whitespace normalized
+- [x] Chapter titles extracted from TOC or heading tags when available
+- [x] Works with epub2 and epub3 formats
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes (97% coverage)
 
 ---
 
@@ -204,8 +204,8 @@ def extract_sentences(text: str, language: str) -> Generator[Sentence, None, Non
 - [ ] Handles French sentence boundaries correctly (M., Mme., etc.)
 - [ ] Model caching works (same model not loaded twice)
 - [ ] Clear error message when spaCy model not installed
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run mypy src` passes
+- [ ] `uv run ruff check .` passes
+- [ ] `uv run mypy .` passes
 - [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
@@ -268,8 +268,8 @@ def extract_tokens(epub_path: Path, language: str) -> Generator[Token, None, Non
 - [ ] Location correctly tracks chapter and sentence indices
 - [ ] Punctuation and whitespace tokens filtered out
 - [ ] Context-aware lemmatization works (e.g., "suis" → "être" vs "suivre")
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run mypy src` passes
+- [ ] `uv run ruff check .` passes
+- [ ] `uv run mypy .` passes
 - [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
@@ -339,8 +339,8 @@ def build_vocabulary(
 - [ ] Examples capped at `max_examples` per lemma
 - [ ] `top()` method returns lemmas sorted by frequency
 - [ ] `to_dict()` produces JSON-serializable output
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run mypy src` passes
+- [ ] `uv run ruff check .` passes
+- [ ] `uv run mypy .` passes
 - [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
