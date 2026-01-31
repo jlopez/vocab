@@ -243,28 +243,28 @@ class TestSpacyModelNotFoundError:
 
     def test_error_message_contains_model_name(self) -> None:
         """Should include model name in error message."""
-        error = SpacyModelNotFoundError("fr", "fr_core_news_sm")
+        error = SpacyModelNotFoundError("fr", "fr_core_news_lg")
 
-        assert "fr_core_news_sm" in str(error)
+        assert "fr_core_news_lg" in str(error)
 
     def test_error_message_contains_language(self) -> None:
         """Should include language code in error message."""
-        error = SpacyModelNotFoundError("fr", "fr_core_news_sm")
+        error = SpacyModelNotFoundError("fr", "fr_core_news_lg")
 
         assert "'fr'" in str(error)
 
     def test_error_message_contains_install_instructions(self) -> None:
         """Should include installation instructions."""
-        error = SpacyModelNotFoundError("fr", "fr_core_news_sm")
+        error = SpacyModelNotFoundError("fr", "fr_core_news_lg")
 
-        assert "python -m spacy download fr_core_news_sm" in str(error)
+        assert "python -m spacy download fr_core_news_lg" in str(error)
 
     def test_stores_language_and_model(self) -> None:
         """Should store language and model_name as attributes."""
-        error = SpacyModelNotFoundError("fr", "fr_core_news_sm")
+        error = SpacyModelNotFoundError("fr", "fr_core_news_lg")
 
         assert error.language == "fr"
-        assert error.model_name == "fr_core_news_sm"
+        assert error.model_name == "fr_core_news_lg"
 
 
 class TestLongText:

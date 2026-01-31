@@ -90,7 +90,7 @@ class Vocabulary:
 - spacy
 
 **spaCy models (not pip packages, downloaded separately):**
-- fr_core_news_sm (French, for initial implementation)
+- fr_core_news_lg (French, for initial implementation)
 - Additional models as needed for other languages
 
 ---
@@ -182,7 +182,7 @@ def extract_sentences(text: str, language: str) -> Generator[Sentence, None, Non
 ```
 
 **spaCy model loading:**
-- Map language codes to model names (e.g., "fr" → "fr_core_news_sm")
+- Map language codes to model names (e.g., "fr" → "fr_core_news_lg")
 - Cache loaded models to avoid reloading
 - Raise clear error if model not installed
 

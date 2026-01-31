@@ -9,13 +9,13 @@ from vocab.models import Sentence
 
 # Mapping of language codes to spaCy model names
 _LANGUAGE_MODELS: dict[str, str] = {
-    "fr": "fr_core_news_sm",
-    "en": "en_core_web_sm",
-    "de": "de_core_news_sm",
-    "es": "es_core_news_sm",
-    "it": "it_core_news_sm",
-    "pt": "pt_core_news_sm",
-    "nl": "nl_core_news_sm",
+    "fr": "fr_core_news_lg",
+    "en": "en_core_web_lg",
+    "de": "de_core_news_lg",
+    "es": "es_core_news_lg",
+    "it": "it_core_news_lg",
+    "pt": "pt_core_news_lg",
+    "nl": "nl_core_news_lg",
 }
 
 # Cache for loaded spaCy models

@@ -32,13 +32,15 @@ You'll need to download spaCy language models for the languages you want to proc
 
 ```bash
 # French
-python -m spacy download fr_core_news_sm
+python -m spacy download fr_core_news_lg
 
 # Other languages
-python -m spacy download en_core_web_sm  # English
-python -m spacy download de_core_news_sm  # German
-python -m spacy download es_core_news_sm  # Spanish
+python -m spacy download en_core_web_lg  # English
+python -m spacy download de_core_news_lg  # German
+python -m spacy download es_core_news_lg  # Spanish
 ```
+
+We use the large (`_lg`) models rather than small (`_sm`) models because they produce significantly better lemmatization. In testing with French text, the small model generated truncated lemmas (e.g., "couvertur" instead of "couverture"), spurious verb forms (e.g., "villa" → "viller"), and inconsistent case normalization. The large models produce ~12% fewer unique lemmas through better consolidation, meaning cleaner vocabulary lists with fewer errors to manually correct. The trade-off is larger download size (~500MB vs ~15MB per model).
 
 ## Usage
 
