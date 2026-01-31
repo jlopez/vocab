@@ -34,36 +34,42 @@ class SpacyModelNotFoundError(Exception):
         )
 
 
-def get_model(language: str) -> Language:
-    """Get or load a spaCy model for the given language.
+def get_model(language_or_model: str) -> Language:
+    """Get or load a spaCy model for the given language or model name.
 
     Args:
-        language: Language code (e.g., "fr" for French).
+        language_or_model: Either a language code (e.g., "fr" for French) which
+            will use a default model, or a full spaCy model name
+            (e.g., "fr_core_news_lg") for explicit model selection.
 
     Returns:
         Loaded spaCy Language model.
 
     Raises:
         SpacyModelNotFoundError: If the model is not installed.
-        ValueError: If the language code is not supported.
+        ValueError: If a language code is provided that is not supported.
     """
-    if language in _model_cache:
-        return _model_cache[language]
+    if language_or_model in _model_cache:
+        return _model_cache[language_or_model]
 
-    if language not in _LANGUAGE_MODELS:
+    # If it contains underscore, treat as full model name; otherwise as language code
+    if "_" in language_or_model:
+        model_name = language_or_model
+    elif language_or_model in _LANGUAGE_MODELS:
+        model_name = _LANGUAGE_MODELS[language_or_model]
+    else:
         supported = ", ".join(sorted(_LANGUAGE_MODELS.keys()))
         raise ValueError(
-            f"Unsupported language code '{language}'. Supported languages: {supported}"
+            f"Unsupported language code '{language_or_model}'. "
+            f"Supported languages: {supported}, or pass a full spaCy model name."
         )
-
-    model_name = _LANGUAGE_MODELS[language]
 
     try:
         nlp = spacy.load(model_name)
     except OSError as e:
-        raise SpacyModelNotFoundError(language, model_name) from e
+        raise SpacyModelNotFoundError(language_or_model, model_name) from e
 
-    _model_cache[language] = nlp
+    _model_cache[language_or_model] = nlp
     return nlp
 
 
