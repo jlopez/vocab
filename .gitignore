@@ -8,3 +8,15 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Coverage
+.coverage
+coverage.json
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+
+# mypy
+.mypy_cache/
