@@ -181,9 +181,80 @@ class TestTextExtraction:
         assert "Deuxième paragraphe.\n" in chapters[0].text
 
 
-class TestChapterTitleExtraction:
-    """Tests for chapter title extraction fallback behavior."""
+class TestMalformedEpub:
+    """Tests for handling malformed epub files."""
 
+    def test_skips_spine_items_with_missing_ids(self, tmp_path: Path) -> None:
+        """Should skip spine entries that reference non-existent items."""
+        from ebooklib import epub
+
+        book = epub.EpubBook()
+        book.set_identifier("test-malformed")
+        book.set_title("Test")
+        book.set_language("en")
+
+        ch1 = epub.EpubHtml(title="Chapter", file_name="ch1.xhtml", lang="en")
+        ch1.content = "<html><body><p>Valid content.</p></body></html>"
+        book.add_item(ch1)
+
+        book.toc = [epub.Link("ch1.xhtml", "Chapter", "ch1")]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+
+        # Add a fake item_id that doesn't exist
+        book.spine = ["nav", ch1]
+        book.spine.append(("nonexistent_item_id", "yes"))
+
+        epub_path = tmp_path / "malformed.epub"
+        epub.write_epub(str(epub_path), book)
+
+        chapters = list(extract_chapters(epub_path))
+
+        # Should only get the valid chapter, skipping the non-existent one
+        assert len(chapters) == 1
+        assert "Valid content" in chapters[0].text
+
+    def test_skips_non_document_items_in_spine(self, tmp_path: Path) -> None:
+        """Should skip spine entries that are not document items (e.g., CSS)."""
+        from ebooklib import epub
+
+        book = epub.EpubBook()
+        book.set_identifier("test-non-document")
+        book.set_title("Test")
+        book.set_language("en")
+
+        ch1 = epub.EpubHtml(title="Chapter", file_name="ch1.xhtml", lang="en")
+        ch1.content = "<html><body><p>Valid content.</p></body></html>"
+        book.add_item(ch1)
+
+        # Add a CSS item (non-document type)
+        css = epub.EpubItem(
+            uid="style",
+            file_name="style.css",
+            media_type="text/css",
+            content=b"body { color: red; }",
+        )
+        book.add_item(css)
+
+        book.toc = [epub.Link("ch1.xhtml", "Chapter", "ch1")]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+
+        # Include the CSS item in the spine (malformed but possible)
+        book.spine = ["nav", ch1]
+        book.spine.append(("style", "yes"))
+
+        epub_path = tmp_path / "non_document_spine.epub"
+        epub.write_epub(str(epub_path), book)
+
+        chapters = list(extract_chapters(epub_path))
+
+        # Should only get the valid chapter, skipping the CSS item
+        assert len(chapters) == 1
+        assert "Valid content" in chapters[0].text
+
+
+class TestChapterTitleExtraction:
     def test_title_from_h1_when_no_toc(self, tmp_path: Path) -> None:
         """Should fall back to h1 tag when not in TOC."""
         from ebooklib import epub
