@@ -67,11 +67,16 @@ class Token:
     location: SentenceLocation
 
 @dataclass
+class Example:
+    sentence: str
+    location: SentenceLocation
+
+@dataclass
 class LemmaEntry:
     lemma: str
     frequency: int
     forms: dict[str, int]  # original form → count
-    examples: list[tuple[str, SentenceLocation]]  # (sentence, location)
+    examples: list[Example]
 
 @dataclass
 class Vocabulary:
@@ -336,14 +341,14 @@ def build_vocabulary(
 - `src/vocab/__init__.py` (exports)
 
 ### Acceptance Criteria
-- [ ] `build_vocabulary()` returns `Vocabulary` with correct frequencies
-- [ ] Forms dict tracks all original forms seen
-- [ ] Examples capped at `max_examples` per lemma
-- [ ] `top()` method returns lemmas sorted by frequency
-- [ ] `to_dict()` produces JSON-serializable output
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `build_vocabulary()` returns `Vocabulary` with correct frequencies
+- [x] Forms dict tracks all original forms seen
+- [x] Examples capped at `max_examples` per lemma
+- [x] `top()` method returns lemmas sorted by frequency
+- [x] `to_dict()` produces JSON-serializable output
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes (100% coverage)
 
 ---
 

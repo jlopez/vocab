@@ -81,9 +81,32 @@ for chapter in extract_chapters(Path("book.epub")):
             print(f"{token.original} → {token.lemma}")
 ```
 
+### Build Vocabulary with Frequency Analysis
+
+```python
+from pathlib import Path
+from vocab import build_vocabulary
+
+# Build vocabulary from an ePub (max_examples must be >= 0)
+vocab = build_vocabulary(Path("book.epub"), "fr", max_examples=3)
+
+# Get the top 10 most frequent lemmas (n must be >= 1)
+for entry in vocab.top(10):
+    print(f"{entry.lemma}: {entry.frequency} occurrences")
+    print(f"  Forms: {entry.forms}")
+    if entry.examples:
+        print(f"  Example: {entry.examples[0].sentence}")
+
+# Export as JSON-serializable dict
+import json
+with open("vocabulary.json", "w") as f:
+    json.dump(vocab.to_dict(), f, ensure_ascii=False, indent=2)
+```
+
+**Note:** Processing very large ePubs builds the entire vocabulary in memory. For typical books this is not an issue, but extremely large documents may require significant memory.
+
 ### Coming Soon
 
-- Vocabulary building with frequency analysis
 - Export to Anki-compatible formats
 
 ## Development
