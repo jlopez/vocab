@@ -53,10 +53,34 @@ for chapter in extract_chapters(Path("book.epub")):
     print(f"Text preview: {chapter.text[:100]}...")
 ```
 
+### Extract Sentences from Text
+
+```python
+from vocab import extract_sentences
+
+text = "Bonjour! Comment allez-vous? Je vais très bien."
+for sentence in extract_sentences(text, "fr"):
+    print(f"Sentence {sentence.index}: {sentence.text}")
+```
+
+### Extract Tokens with Lemmatization
+
+```python
+from vocab import extract_chapters, extract_sentences, extract_tokens, SentenceLocation
+
+for chapter in extract_chapters(Path("book.epub")):
+    for sentence in extract_sentences(chapter.text, "fr"):
+        location = SentenceLocation(
+            chapter_index=chapter.index,
+            chapter_title=chapter.title,
+            sentence_index=sentence.index,
+        )
+        for token in extract_tokens(sentence.text, location, "fr"):
+            print(f"{token.original} → {token.lemma}")
+```
+
 ### Coming Soon
 
-- Sentence extraction with spaCy
-- Token extraction with lemmatization
 - Vocabulary building with frequency analysis
 - Export to Anki-compatible formats
 

@@ -72,6 +72,7 @@ Use `docs/plan.md` for multi-phase implementation work:
 3. Run all acceptance criteria checks (ruff, mypy, pytest, coverage)
 4. Once all checks pass:
    - Update `docs/plan.md` to mark the phase as complete (add checkmarks to acceptance criteria)
+   - Update `README.md` with any new public APIs, usage examples, or coverage badge changes
    - Commit all changed files with a conventional commit message
 
 ### When Asked for Code Review (During Planning)
