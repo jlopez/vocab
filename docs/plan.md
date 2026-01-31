@@ -142,13 +142,13 @@ def extract_chapters(epub_path: Path) -> Generator[Chapter, None, None]:
 - `src/vocab/__init__.py` (exports)
 
 ### Acceptance Criteria
-- [ ] `extract_chapters()` yields `Chapter` objects in reading order
-- [ ] Chapter text has HTML stripped, whitespace normalized
-- [ ] Chapter titles extracted from TOC or heading tags when available
-- [ ] Works with epub2 and epub3 formats
-- [ ] `uv run ruff check src tests` passes
-- [ ] `uv run mypy src` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `extract_chapters()` yields `Chapter` objects in reading order
+- [x] Chapter text has HTML stripped, whitespace normalized
+- [x] Chapter titles extracted from TOC or heading tags when available
+- [x] Works with epub2 and epub3 formats
+- [x] `uv run ruff check src tests` passes
+- [x] `uv run mypy src` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes (97% coverage)
 
 ---
 
