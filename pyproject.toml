@@ -7,7 +7,11 @@ authors = [
     { name = "Jesus Lopez", email = "jesus@jesusla.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "ebooklib>=0.20",
+    "lxml>=6.0.2",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.15,<0.10.0"]
@@ -80,6 +84,11 @@ ignore_missing_imports = false
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+# Override for untyped libraries
+[[tool.mypy.overrides]]
+module = ["ebooklib", "ebooklib.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
