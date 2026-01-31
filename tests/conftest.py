@@ -1,9 +1,13 @@
 """Pytest fixtures for vocab tests."""
 
+from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import spacy
 from ebooklib import epub
+from spacy.language import Language
 
 
 @pytest.fixture
@@ -151,3 +155,21 @@ def empty_chapter_epub(tmp_path: Path) -> Path:
     epub.write_epub(str(epub_path), book)
 
     return epub_path
+
+
+@pytest.fixture
+def mock_spacy_model() -> Generator[Language, None, None]:
+    """Create a mock spaCy model using blank+sentencizer for testing.
+
+    This avoids requiring the full trained model to be downloaded in CI.
+    The sentencizer provides rule-based sentence segmentation.
+
+    Yields:
+        The blank spaCy model with sentencizer.
+    """
+    # Create a blank model with just the sentencizer
+    nlp = spacy.blank("fr")
+    nlp.add_pipe("sentencizer")
+
+    with patch("vocab.sentences.get_model", return_value=nlp):
+        yield nlp

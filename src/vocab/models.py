@@ -16,3 +16,16 @@ class Chapter:
     text: str
     index: int
     title: str | None
+
+
+@dataclass
+class Sentence:
+    """A sentence extracted from text.
+
+    Attributes:
+        text: The sentence text.
+        index: Zero-based index of the sentence within the source text.
+    """
+
+    text: str
+    index: int

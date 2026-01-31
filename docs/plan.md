@@ -200,13 +200,13 @@ def extract_sentences(text: str, language: str) -> Generator[Sentence, None, Non
 - `pyproject.toml` (add spacy dependency)
 
 ### Acceptance Criteria
-- [ ] `extract_sentences()` yields `Sentence` objects with correct indices
-- [ ] Handles French sentence boundaries correctly (M., Mme., etc.)
-- [ ] Model caching works (same model not loaded twice)
-- [ ] Clear error message when spaCy model not installed
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `extract_sentences()` yields `Sentence` objects with correct indices
+- [x] Handles French sentence boundaries correctly (M., Mme., etc.)
+- [x] Model caching works (same model not loaded twice)
+- [x] Clear error message when spaCy model not installed
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes (98% coverage)
 
 ---
 
