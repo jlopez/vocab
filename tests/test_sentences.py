@@ -185,6 +185,46 @@ class TestGetModel:
         with pytest.raises(ValueError, match="Unsupported language code 'xyz'"):
             get_model("xyz")
 
+    def test_error_message_suggests_full_model_name(self) -> None:
+        """Should suggest using full model name in error message."""
+        with pytest.raises(ValueError, match="or pass a full spaCy model name"):
+            get_model("xyz")
+
+    def test_loads_full_model_name_directly(self) -> None:
+        """Should load full model names without using the language mapping."""
+        mock_nlp = MagicMock()
+
+        with patch("vocab.sentences.spacy.load", return_value=mock_nlp) as mock_load:
+            _model_cache.clear()
+            nlp = get_model("fr_core_news_lg")
+
+            # Should call spacy.load with the exact model name
+            mock_load.assert_called_once_with("fr_core_news_lg")
+            assert nlp is mock_nlp
+
+    def test_caches_full_model_names(self) -> None:
+        """Should cache models loaded by full name."""
+        mock_nlp = MagicMock()
+
+        with patch("vocab.sentences.spacy.load", return_value=mock_nlp) as mock_load:
+            _model_cache.clear()
+
+            nlp1 = get_model("fr_core_news_lg")
+            nlp2 = get_model("fr_core_news_lg")
+
+            assert nlp1 is nlp2
+            mock_load.assert_called_once()
+
+    def test_raises_for_missing_full_model_name(self) -> None:
+        """Should raise SpacyModelNotFoundError when full model name not installed."""
+        with patch("vocab.sentences.spacy.load", side_effect=OSError("Model not found")):
+            _model_cache.clear()
+            with pytest.raises(SpacyModelNotFoundError) as exc_info:
+                get_model("fr_custom_model_lg")
+
+            assert "fr_custom_model_lg" in str(exc_info.value)
+            assert "python -m spacy download" in str(exc_info.value)
+
     def test_raises_for_missing_model(self) -> None:
         """Should raise SpacyModelNotFoundError when model not installed."""
         with patch.dict(
