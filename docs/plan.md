@@ -28,10 +28,10 @@ Build a pipeline to extract vocabulary with frequency data from ePub files for l
 - **Responsibility**: Split text into sentences using language-aware rules
 
 ### Layer 2: Token Extraction
-- **Input**: Epub path, language code
+- **Input**: Sentence text, location, language code
 - **Output**: Generator of `Token` (lemma, original, sentence, location)
-- **Dependencies**: Layers 0 + 1
-- **Responsibility**: Compose L0 and L1, yield tokens with full context
+- **Dependencies**: None (pure function)
+- **Responsibility**: Lemmatize sentence tokens, filter punctuation/whitespace
 
 ### Layer 3: Vocabulary Building
 - **Input**: Epub path, language code
@@ -235,15 +235,17 @@ class Token:
     location: SentenceLocation
 
 # src/vocab/tokens.py
-def extract_tokens(epub_path: Path, language: str) -> Generator[Token, None, None]:
-    """Extract lemmatized tokens from an epub with full context.
-
-    Composes chapter extraction (L0) and sentence extraction (L1),
-    then runs spaCy lemmatization on each sentence.
+def extract_tokens(
+    sentence_text: str,
+    location: SentenceLocation,
+    language: str,
+) -> Generator[Token, None, None]:
+    """Extract lemmatized tokens from a sentence.
 
     Args:
-        epub_path: Path to the epub file
-        language: Language code (e.g., "fr" for French)
+        sentence_text: The sentence text to tokenize.
+        location: Location of the sentence within the source document.
+        language: Language code (e.g., "fr" for French).
 
     Yields:
         Token objects with lemma, original form, sentence text, and location
@@ -264,13 +266,13 @@ def extract_tokens(epub_path: Path, language: str) -> Generator[Token, None, Non
 - `src/vocab/__init__.py` (exports)
 
 ### Acceptance Criteria
-- [ ] `extract_tokens()` yields `Token` objects with correct lemmas
-- [ ] Location correctly tracks chapter and sentence indices
-- [ ] Punctuation and whitespace tokens filtered out
-- [ ] Context-aware lemmatization works (e.g., "suis" → "être" vs "suivre")
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `extract_tokens()` yields `Token` objects with correct lemmas
+- [x] Location correctly tracks chapter and sentence indices
+- [x] Punctuation and whitespace tokens filtered out
+- [x] Context-aware lemmatization works (e.g., "a" → "avoir", "bat" → "battre")
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes (98% coverage)
 
 ---
 

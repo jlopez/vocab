@@ -29,3 +29,35 @@ class Sentence:
 
     text: str
     index: int
+
+
+@dataclass
+class SentenceLocation:
+    """Location of a sentence within an epub.
+
+    Attributes:
+        chapter_index: Zero-based index of the chapter.
+        chapter_title: Title of the chapter, if available.
+        sentence_index: Zero-based index of the sentence within the chapter.
+    """
+
+    chapter_index: int
+    chapter_title: str | None
+    sentence_index: int
+
+
+@dataclass
+class Token:
+    """A token extracted from text with lemma and context.
+
+    Attributes:
+        lemma: The lemmatized form of the token.
+        original: The original text of the token as it appears.
+        sentence: The full sentence containing the token.
+        location: Location of the sentence within the epub.
+    """
+
+    lemma: str
+    original: str
+    sentence: str
+    location: SentenceLocation
