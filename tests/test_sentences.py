@@ -102,28 +102,30 @@ class TestExtractSentences:
         self, mock_spacy_model: Language
     ) -> None:
         """Should filter out sentences containing only punctuation."""
-        text = "Il dit : « Bonjour. » Elle répondit."
+        # The sentencizer treats "!!!" as its own sentence before "Bonjour."
+        text = "!!! Bonjour. Au revoir."
         sentences = list(extract_sentences(text, "fr"))
 
-        # Should not include sentences that are just "»" or "«"
-        for s in sentences:
-            assert any(c.isalnum() for c in s.text), f"Found punctuation-only: {s.text}"
+        # The "!!!" sentence should be filtered out
+        assert len(sentences) == 2
+        assert sentences[0].text == "Bonjour."
+        assert sentences[1].text == "Au revoir."
 
     def test_punctuation_filtering_can_be_disabled(self, mock_spacy_model: Language) -> None:
         """Should keep punctuation-only sentences when filter_punctuation=False."""
-        text = "Bonjour. « » Au revoir."
+        # The sentencizer treats "!!!" as its own sentence
+        text = "!!! Bonjour."
         sentences_filtered = list(extract_sentences(text, "fr", filter_punctuation=True))
         sentences_unfiltered = list(extract_sentences(text, "fr", filter_punctuation=False))
 
-        # With filtering disabled, we may get more sentences (punctuation-only ones)
-        assert len(sentences_filtered) >= 1
-        assert len(sentences_unfiltered) >= len(sentences_filtered)
+        # With filtering enabled, "!!!" is removed
+        assert len(sentences_filtered) == 1
+        assert sentences_filtered[0].text == "Bonjour."
 
-        # Verify content is preserved in both modes
-        filtered_text = " ".join(s.text for s in sentences_filtered)
-        unfiltered_text = " ".join(s.text for s in sentences_unfiltered)
-        assert "Bonjour" in filtered_text
-        assert "Bonjour" in unfiltered_text
+        # With filtering disabled, "!!!" is kept
+        assert len(sentences_unfiltered) == 2
+        assert sentences_unfiltered[0].text == "!!!"
+        assert sentences_unfiltered[1].text == "Bonjour."
 
     def test_normalizes_internal_whitespace(self, mock_spacy_model: Language) -> None:
         """Should replace newlines with spaces and collapse multiple spaces."""
