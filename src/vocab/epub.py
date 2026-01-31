@@ -13,8 +13,22 @@ from vocab.models import Chapter
 # Suppress warning about parsing XHTML as HTML - lxml handles this fine
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
+# Mapping for smart quote normalization
+_QUOTE_NORMALIZE_MAP = str.maketrans(
+    {
+        "\u2018": "'",  # ' left single quotation mark
+        "\u2019": "'",  # ' right single quotation mark (apostrophe)
+        "\u201c": '"',  # " left double quotation mark
+        "\u201d": '"',  # " right double quotation mark
+    }
+)
 
-def extract_chapters(epub_path: Path) -> Generator[Chapter, None, None]:
+
+def extract_chapters(
+    epub_path: Path,
+    *,
+    normalize_quotes: bool = True,
+) -> Generator[Chapter, None, None]:
     """Extract chapters from an epub file.
 
     Yields Chapter objects containing the text content, index, and title
@@ -22,6 +36,9 @@ def extract_chapters(epub_path: Path) -> Generator[Chapter, None, None]:
 
     Args:
         epub_path: Path to the epub file.
+        normalize_quotes: If True (default), convert smart quotes to ASCII
+            equivalents (e.g., ' ' to ', " " to "). This improves
+            compatibility with NLP tools like spaCy.
 
     Yields:
         Chapter objects in reading order.
@@ -48,6 +65,9 @@ def extract_chapters(epub_path: Path) -> Generator[Chapter, None, None]:
 
         content = item.get_content()
         text = _extract_text(content)
+
+        if normalize_quotes:
+            text = text.translate(_QUOTE_NORMALIZE_MAP)
 
         # Skip empty chapters
         if not text.strip():

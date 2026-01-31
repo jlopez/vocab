@@ -254,6 +254,117 @@ class TestMalformedEpub:
         assert "Valid content" in chapters[0].text
 
 
+class TestQuoteNormalization:
+    """Tests for smart quote normalization."""
+
+    def test_normalizes_smart_quotes_by_default(self, tmp_path: Path) -> None:
+        """Should convert smart quotes to ASCII by default."""
+        from ebooklib import epub
+
+        book = epub.EpubBook()
+        book.set_identifier("test-quotes")
+        book.set_title("Test")
+        book.set_language("fr")
+
+        ch1 = epub.EpubHtml(title="Chapter", file_name="ch1.xhtml", lang="fr")
+        # Use smart quotes: \u2019 (right single quote, used as apostrophe)
+        ch1.content = """
+        <html>
+        <body>
+            <p>C\u2019est l\u2019exemple d\u2019aujourd\u2019hui.</p>
+        </body>
+        </html>
+        """
+        book.add_item(ch1)
+
+        book.toc = [epub.Link("ch1.xhtml", "Chapter", "ch1")]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = ["nav", ch1]
+
+        epub_path = tmp_path / "smart_quotes.epub"
+        epub.write_epub(str(epub_path), book)
+
+        chapters = list(extract_chapters(epub_path))
+
+        # Smart quotes should be converted to ASCII
+        assert "C'est" in chapters[0].text  # ' -> '
+        assert "l'exemple" in chapters[0].text
+        assert "d'aujourd'hui" in chapters[0].text
+        # Verify no smart quotes remain
+        assert "\u2019" not in chapters[0].text  # '
+        assert "\u2018" not in chapters[0].text  # '
+
+    def test_normalizes_double_quotes(self, tmp_path: Path) -> None:
+        """Should convert smart double quotes to ASCII."""
+        from ebooklib import epub
+
+        book = epub.EpubBook()
+        book.set_identifier("test-double-quotes")
+        book.set_title("Test")
+        book.set_language("en")
+
+        ch1 = epub.EpubHtml(title="Chapter", file_name="ch1.xhtml", lang="en")
+        # Use smart double quotes: \u201c (left) and \u201d (right)
+        ch1.content = """
+        <html>
+        <body>
+            <p>She said \u201cHello\u201d to him.</p>
+        </body>
+        </html>
+        """
+        book.add_item(ch1)
+
+        book.toc = [epub.Link("ch1.xhtml", "Chapter", "ch1")]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = ["nav", ch1]
+
+        epub_path = tmp_path / "double_quotes.epub"
+        epub.write_epub(str(epub_path), book)
+
+        chapters = list(extract_chapters(epub_path))
+
+        # Smart double quotes should be converted to ASCII
+        assert '"Hello"' in chapters[0].text
+        # Verify no smart quotes remain
+        assert "\u201c" not in chapters[0].text  # "
+        assert "\u201d" not in chapters[0].text  # "
+
+    def test_can_disable_quote_normalization(self, tmp_path: Path) -> None:
+        """Should preserve smart quotes when normalization is disabled."""
+        from ebooklib import epub
+
+        book = epub.EpubBook()
+        book.set_identifier("test-no-normalize")
+        book.set_title("Test")
+        book.set_language("fr")
+
+        ch1 = epub.EpubHtml(title="Chapter", file_name="ch1.xhtml", lang="fr")
+        # Use smart quote: \u2019 (right single quote)
+        ch1.content = """
+        <html>
+        <body>
+            <p>C\u2019est un test.</p>
+        </body>
+        </html>
+        """
+        book.add_item(ch1)
+
+        book.toc = [epub.Link("ch1.xhtml", "Chapter", "ch1")]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        book.spine = ["nav", ch1]
+
+        epub_path = tmp_path / "no_normalize.epub"
+        epub.write_epub(str(epub_path), book)
+
+        chapters = list(extract_chapters(epub_path, normalize_quotes=False))
+
+        # Smart quotes should be preserved
+        assert "\u2019" in chapters[0].text  # '
+
+
 class TestChapterTitleExtraction:
     def test_title_from_h1_when_no_toc(self, tmp_path: Path) -> None:
         """Should fall back to h1 tag when not in TOC."""
