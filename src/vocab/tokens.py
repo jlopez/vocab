@@ -24,7 +24,8 @@ def extract_tokens(
             symbols, and other non-vocabulary tokens.
 
     Yields:
-        Token objects with lemma, original form, sentence text, and location.
+        Token objects with lemma, original form, POS tag, morphology, sentence
+        text, and location.
 
     Raises:
         SpacyModelNotFoundError: If the spaCy model is not installed.
@@ -54,4 +55,6 @@ def extract_tokens(
             original=token.text,
             sentence=sentence_text,
             location=location,
+            pos=token.pos_,
+            morph=token.morph.to_dict(),
         )
