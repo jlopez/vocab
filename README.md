@@ -1,6 +1,6 @@
 # vocab
 
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-97%25-brightgreen)
 
 Extract vocabulary with frequency data from ePub files for language learning.
 

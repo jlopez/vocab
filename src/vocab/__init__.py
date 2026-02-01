@@ -1,5 +1,6 @@
 """Vocabulary extraction from ePub files."""
 
+from vocab.dictionary import Dictionary, DictionaryEntry
 from vocab.epub import extract_chapters
 from vocab.models import (
     Chapter,
@@ -16,6 +17,8 @@ from vocab.vocabulary import build_vocabulary
 
 __all__ = [
     "Chapter",
+    "Dictionary",
+    "DictionaryEntry",
     "Example",
     "LemmaEntry",
     "Sentence",
