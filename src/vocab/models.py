@@ -135,3 +135,35 @@ class Vocabulary:
             contains lemma, frequency, forms, and examples.
         """
         return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Vocabulary":
+        """Load vocabulary from a JSON-serializable dictionary.
+
+        Args:
+            data: Dictionary with 'language' and 'entries' keys,
+                  as produced by to_dict().
+
+        Returns:
+            Vocabulary instance.
+        """
+        entries: dict[str, LemmaEntry] = {}
+        for lemma, entry_data in data["entries"].items():
+            examples = [
+                Example(
+                    sentence=ex["sentence"],
+                    location=SentenceLocation(
+                        chapter_index=ex["location"]["chapter_index"],
+                        chapter_title=ex["location"]["chapter_title"],
+                        sentence_index=ex["location"]["sentence_index"],
+                    ),
+                )
+                for ex in entry_data["examples"]
+            ]
+            entries[lemma] = LemmaEntry(
+                lemma=entry_data["lemma"],
+                frequency=entry_data["frequency"],
+                forms=entry_data["forms"],
+                examples=examples,
+            )
+        return cls(entries=entries, language=data["language"])
