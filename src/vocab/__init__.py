@@ -1,6 +1,7 @@
 """Vocabulary extraction from ePub files."""
 
 from vocab.epub import extract_chapters
+from vocab.filtering import filter_vocabulary
 from vocab.models import (
     Chapter,
     Example,
@@ -27,4 +28,5 @@ __all__ = [
     "extract_chapters",
     "extract_sentences",
     "extract_tokens",
+    "filter_vocabulary",
 ]
