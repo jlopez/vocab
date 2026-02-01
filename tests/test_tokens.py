@@ -64,6 +64,38 @@ class TestExtractTokens:
         assert isinstance(token.original, str)
         assert isinstance(token.sentence, str)
         assert isinstance(token.location, SentenceLocation)
+        assert isinstance(token.pos, str)
+        assert isinstance(token.morph, dict)
+
+    def test_token_pos_from_spacy(
+        self, mock_spacy_model_with_lemmatizer: Language, sample_location: SentenceLocation
+    ) -> None:
+        """Should populate pos from spaCy's pos_ attribute."""
+        sentence = "Ceci est une phrase."
+        with patch("vocab.tokens.get_model", return_value=mock_spacy_model_with_lemmatizer):
+            tokens = list(extract_tokens(sentence, sample_location, "fr"))
+
+        # Blank model returns empty string for pos_, but the field should exist
+        for token in tokens:
+            assert hasattr(token, "pos")
+            assert isinstance(token.pos, str)
+
+    def test_token_morph_from_spacy(
+        self, mock_spacy_model_with_lemmatizer: Language, sample_location: SentenceLocation
+    ) -> None:
+        """Should populate morph from spaCy's morph.to_dict()."""
+        sentence = "Ceci est une phrase."
+        with patch("vocab.tokens.get_model", return_value=mock_spacy_model_with_lemmatizer):
+            tokens = list(extract_tokens(sentence, sample_location, "fr"))
+
+        # Blank model returns empty dict for morph, but the field should exist
+        for token in tokens:
+            assert hasattr(token, "morph")
+            assert isinstance(token.morph, dict)
+            # All keys and values should be strings
+            for key, value in token.morph.items():
+                assert isinstance(key, str)
+                assert isinstance(value, str)
 
     def test_location_is_passed_through(self, mock_spacy_model_with_lemmatizer: Language) -> None:
         """Should use the provided location in all output tokens."""

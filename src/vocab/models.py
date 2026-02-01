@@ -53,12 +53,16 @@ class Token:
 
     Attributes:
         lemma: The lemmatized form of the token.
+        pos: Universal part-of-speech tag (e.g., "NOUN", "VERB").
+        morph: Morphological features as a dictionary (e.g., {"Gender": "Masc"}).
         original: The original text of the token as it appears.
         sentence: The full sentence containing the token.
         location: Location of the sentence within the epub.
     """
 
     lemma: str
+    pos: str
+    morph: dict[str, str]
     original: str
     sentence: str
     location: SentenceLocation
