@@ -5,13 +5,14 @@ from pathlib import Path
 
 from vocab.anki import (
     AnkiDeckBuilder,
+    _format_example_translation,
     _format_examples,
     _format_forms,
     _generate_deck_id,
     _generate_model_id,
     _highlight_word,
 )
-from vocab.dictionary import DictionaryEntry, DictionarySense
+from vocab.dictionary import DictionaryEntry, DictionaryExample, DictionarySense
 from vocab.models import Example, LemmaEntry, SentenceLocation
 from vocab.pipeline import SenseAssignment
 
@@ -21,8 +22,11 @@ def make_sense_assignment(
     pos: str = "noun",
     translation: str = "dog",
     ipa: str = "/ʃjɛ̃/",
+    etymology: str | None = None,
     examples: list[str] | None = None,
     example_indices: list[int] | None = None,
+    dict_example_text: str | None = None,
+    dict_example_translation: str | None = None,
 ) -> SenseAssignment:
     """Create a SenseAssignment for testing."""
     if examples is None:
@@ -48,16 +52,24 @@ def make_sense_assignment(
         ],
     )
 
+    # Build dictionary example if provided
+    dict_example: DictionaryExample | None = None
+    if dict_example_text is not None:
+        dict_example = DictionaryExample(
+            text=dict_example_text,
+            translation=dict_example_translation or "",
+        )
+
     dict_entry = DictionaryEntry(
         word=word,
         pos=pos,
         ipa=ipa,
-        etymology=None,
+        etymology=etymology,
         senses=[
             DictionarySense(
                 id=f"{word}-{pos}-1",
                 translation=translation,
-                example=None,
+                example=dict_example,
             )
         ],
     )
@@ -128,6 +140,53 @@ class TestHighlightWord:
         assert result == "Le chat miaule."
 
 
+class TestHtmlEscaping:
+    """Tests for HTML escaping in card fields."""
+
+    def test_format_examples_escapes_html_in_sentence(self) -> None:
+        """Test that angle brackets in sentences are escaped."""
+        assignment = make_sense_assignment(
+            word="test",
+            examples=["This has <angle> brackets."],
+        )
+        result = _format_examples(assignment)
+        assert "&lt;angle&gt;" in result
+        assert "<angle>" not in result
+
+    def test_format_examples_escapes_html_in_dict_example(self) -> None:
+        """Test that angle brackets in dictionary examples are escaped."""
+        assignment = make_sense_assignment(
+            word="test",
+            examples=["Normal sentence."],
+            dict_example_text="From <Latin> root.",
+        )
+        result = _format_examples(assignment)
+        assert "&lt;Latin&gt;" in result
+        assert "<Latin>" not in result
+
+    def test_format_example_translation_escapes_html(self) -> None:
+        """Test that angle brackets in translation are escaped."""
+        assignment = make_sense_assignment(
+            word="test",
+            dict_example_text="Example.",
+            dict_example_translation="This means <something>.",
+        )
+        result = _format_example_translation(assignment)
+        assert "&lt;something&gt;" in result
+        assert "<something>" not in result
+
+    def test_highlight_preserved_after_escaping(self) -> None:
+        """Test that highlighting still works after escaping."""
+        assignment = make_sense_assignment(
+            word="test",
+            examples=["A <weird> test case."],
+        )
+        result = _format_examples(assignment)
+        # Should have both escaping and highlighting
+        assert "&lt;weird&gt;" in result
+        assert "<b>test</b>" in result
+
+
 class TestFormatExamples:
     """Tests for _format_examples function."""
 
@@ -135,7 +194,7 @@ class TestFormatExamples:
         """Test formatting a single example."""
         assignment = make_sense_assignment(examples=["Le chien aboie."])
         result = _format_examples(assignment)
-        assert "« Le <b>chien</b> aboie. »" in result
+        assert "Le <b>chien</b> aboie." in result
         assert 'class="example"' in result
 
     def test_formats_multiple_examples(self) -> None:
@@ -145,8 +204,8 @@ class TestFormatExamples:
             example_indices=[0, 1],
         )
         result = _format_examples(assignment)
-        assert "« Le <b>chien</b> aboie. »" in result
-        assert "« Mon <b>chien</b> dort. »" in result
+        assert "Le <b>chien</b> aboie." in result
+        assert "Mon <b>chien</b> dort." in result
 
     def test_uses_only_specified_indices(self) -> None:
         """Test that only specified example indices are used."""
@@ -168,6 +227,69 @@ class TestFormatExamples:
         )
         result = _format_examples(assignment)
         assert result == ""
+
+    def test_includes_dictionary_example_first(self) -> None:
+        """Test that dictionary example appears before book examples."""
+        assignment = make_sense_assignment(
+            examples=["Le chien aboie."],
+            dict_example_text="Mon chien est gentil.",
+        )
+        result = _format_examples(assignment)
+        # Dictionary example should come first
+        dict_pos = result.find("Mon <b>chien</b> est gentil.")
+        book_pos = result.find("Le <b>chien</b> aboie.")
+        assert dict_pos < book_pos
+
+    def test_dictionary_example_only_when_no_book_examples(self) -> None:
+        """Test formatting with only dictionary example."""
+        assignment = make_sense_assignment(
+            examples=["Unused."],
+            example_indices=[],  # No book examples
+            word="chien",
+            dict_example_text="Le chien dort.",
+        )
+        result = _format_examples(assignment)
+        assert "Le <b>chien</b> dort." in result
+
+
+class TestFormatExampleTranslation:
+    """Tests for _format_example_translation function."""
+
+    def test_returns_empty_when_no_example(self) -> None:
+        """Test returns empty string when sense has no example."""
+        assignment = make_sense_assignment()
+        result = _format_example_translation(assignment)
+        assert result == ""
+
+    def test_returns_empty_when_no_translation(self) -> None:
+        """Test returns empty when example has no translation."""
+        assignment = make_sense_assignment(
+            dict_example_text="Le chien dort.",
+            dict_example_translation="",
+        )
+        result = _format_example_translation(assignment)
+        assert result == ""
+
+    def test_formats_translation(self) -> None:
+        """Test formatting example translation."""
+        assignment = make_sense_assignment(
+            word="chien",
+            dict_example_text="Le chien dort.",
+            dict_example_translation="The dog sleeps.",
+        )
+        result = _format_example_translation(assignment)
+        assert "The dog sleeps." in result
+
+    def test_highlights_word_in_translation(self) -> None:
+        """Test that source word is highlighted if present in translation."""
+        assignment = make_sense_assignment(
+            word="table",
+            translation="table",
+            dict_example_text="La table est grande.",
+            dict_example_translation="The table is big.",
+        )
+        result = _format_example_translation(assignment)
+        assert "<b>table</b>" in result
 
 
 class TestFormatForms:
@@ -289,6 +411,21 @@ class TestAnkiDeckBuilder:
                 etymology=None,
                 senses=[DictionarySense(id="1", translation="test", example=None)],
             )
+            deck.add(assignment)
+        assert output_path.exists()
+
+    def test_card_has_etymology_on_back(self, tmp_path: Path) -> None:
+        """Test that card back contains etymology field."""
+        output_path = tmp_path / "test.apkg"
+        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            deck.add(make_sense_assignment(etymology="From Latin canis."))
+            assert "{{Etymology}}" in deck._model.templates[0]["afmt"]
+
+    def test_handles_missing_etymology(self, tmp_path: Path) -> None:
+        """Test that missing etymology is handled gracefully."""
+        output_path = tmp_path / "test.apkg"
+        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            assignment = make_sense_assignment(etymology=None)
             deck.add(assignment)
         assert output_path.exists()
 

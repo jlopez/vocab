@@ -57,6 +57,9 @@ LANGUAGE_NAMES: dict[str, str] = {
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "vocab"
 
+# Head template names to extract word_display from
+SUPPORTED_HEAD_TEMPLATES: set[str] = {"fr-noun"}
+
 
 @dataclass
 class DictionaryExample:
@@ -108,6 +111,7 @@ class DictionaryEntry:
         ipa: IPA pronunciation, if available.
         etymology: Etymology text, if available.
         senses: List of word senses with translations and examples.
+        word_display: Expanded headword with grammatical info (e.g., "durée f (plural durées)").
     """
 
     word: str
@@ -115,6 +119,7 @@ class DictionaryEntry:
     ipa: str | None
     etymology: str | None
     senses: list[DictionarySense]
+    word_display: str | None = None
 
     @classmethod
     def from_kaikki(cls, raw: dict[str, Any]) -> DictionaryEntry:
@@ -125,6 +130,7 @@ class DictionaryEntry:
             ipa=cls._extract_ipa(raw),
             etymology=raw.get("etymology_text"),
             senses=[DictionarySense.from_kaikki(s) for s in raw.get("senses", [])],
+            word_display=cls._extract_word_display(raw),
         )
 
     @staticmethod
@@ -135,6 +141,19 @@ class DictionaryEntry:
             # Check for string type (kaikki sometimes has lists) and non-empty
             if isinstance(ipa, str) and ipa:
                 return ipa
+        return None
+
+    @staticmethod
+    def _extract_word_display(raw: dict[str, Any]) -> str | None:
+        """Extract word display from first supported head template.
+
+        Searches head_templates for the first template with a name in
+        SUPPORTED_HEAD_TEMPLATES and returns its expansion.
+        """
+        for template in raw.get("head_templates", []):
+            if template.get("name") in SUPPORTED_HEAD_TEMPLATES:
+                expansion: str | None = template.get("expansion")
+                return expansion
         return None
 
 
