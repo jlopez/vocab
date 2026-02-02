@@ -243,6 +243,61 @@ class TestDictionaryEntry:
         assert entry.ipa is None
         assert entry.etymology is None
         assert entry.senses == []
+        assert entry.word_display is None
+
+    def test_from_kaikki_word_display_with_supported_template(self) -> None:
+        """Test extracting word_display from supported head template."""
+        raw = {
+            "word": "durée",
+            "pos": "noun",
+            "head_templates": [
+                {
+                    "name": "fr-noun",
+                    "args": {"1": "f"},
+                    "expansion": "durée f (plural durées)",
+                }
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word_display == "durée f (plural durées)"
+
+    def test_from_kaikki_word_display_no_head_templates(self) -> None:
+        """Test word_display is None when no head_templates."""
+        raw = {"word": "test", "pos": "noun", "senses": []}
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word_display is None
+
+    def test_from_kaikki_word_display_unsupported_template(self) -> None:
+        """Test word_display is None for unsupported template names."""
+        raw = {
+            "word": "test",
+            "pos": "verb",
+            "head_templates": [
+                {
+                    "name": "fr-verb",
+                    "expansion": "test (some conjugation)",
+                }
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word_display is None
+
+    def test_from_kaikki_word_display_first_supported_template(self) -> None:
+        """Test that first supported template is used."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "head_templates": [
+                {"name": "unsupported", "expansion": "wrong"},
+                {"name": "fr-noun", "expansion": "correct f"},
+                {"name": "fr-noun", "expansion": "also correct"},
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word_display == "correct f"
 
 
 class TestSpacyToKaikkiMapping:

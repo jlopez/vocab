@@ -15,6 +15,9 @@ vocab is a Python library that extracts words from ePub files, performs lemmatiz
 - Language-aware sentence splitting
 - Context-aware lemmatization (e.g., French "suis" → "être" or "suivre" based on context)
 - Track word frequencies with original forms and example sentences
+- Dictionary lookups via Wiktionary (kaikki.org) with POS filtering
+- LLM-powered sense disambiguation for polysemous words
+- Export to Anki `.apkg` format with styled flashcards
 
 ## Installation
 
@@ -105,9 +108,97 @@ with open("vocabulary.json", "w") as f:
 
 **Note:** Processing very large ePubs builds the entire vocabulary in memory. For typical books this is not an issue, but extremely large documents may require significant memory.
 
-### Coming Soon
+### Dictionary Lookups
 
-- Export to Anki-compatible formats
+```python
+from vocab import Dictionary, SPACY_TO_KAIKKI
+
+# Initialize dictionary (downloads and caches from kaikki.org)
+dictionary = Dictionary("fr")
+
+# Look up a word with POS filtering
+kaikki_pos = SPACY_TO_KAIKKI.get("NOUN", [])
+entries = dictionary.lookup("faux", pos=kaikki_pos)
+
+for entry in entries:
+    print(f"{entry.word} [{entry.pos}] - IPA: {entry.ipa}")
+    for sense in entry.senses:
+        print(f"  - {sense.translation}")
+```
+
+### Enrichment and Disambiguation Pipeline
+
+```python
+import asyncio
+from vocab import (
+    build_vocabulary,
+    Dictionary,
+    enrich_lemma,
+    needs_disambiguation,
+    assign_single_sense,
+    disambiguate_senses,
+)
+from pathlib import Path
+
+async def process_vocabulary():
+    vocab = build_vocabulary(Path("book.epub"), "fr", max_examples=3)
+    dictionary = Dictionary("fr")
+
+    for lemma_entry in vocab:
+        enriched = enrich_lemma(lemma_entry, dictionary)
+        if not enriched:
+            continue  # No dictionary match
+
+        if not needs_disambiguation(enriched):
+            # Single sense - trivial assignment
+            assignment = assign_single_sense(enriched)
+        else:
+            # Multiple senses - use LLM
+            assignments = await disambiguate_senses(enriched)
+            # Process assignments...
+
+asyncio.run(process_vocabulary())
+```
+
+### Export to Anki
+
+```python
+import asyncio
+from pathlib import Path
+from vocab import (
+    build_vocabulary,
+    Dictionary,
+    AnkiDeckBuilder,
+    enrich_lemma,
+    needs_disambiguation,
+    assign_single_sense,
+    disambiguate_senses,
+)
+
+async def create_anki_deck():
+    vocab = build_vocabulary(Path("book.epub"), "fr", max_examples=3)
+    dictionary = Dictionary("fr")
+
+    with AnkiDeckBuilder(
+        path=Path("vocabulary.apkg"),
+        deck_name="French Vocabulary",
+        source_language="fr",
+    ) as deck:
+        for lemma_entry in vocab.top(100):
+            enriched = enrich_lemma(lemma_entry, dictionary)
+            if not enriched:
+                continue
+
+            if not needs_disambiguation(enriched):
+                deck.add(assign_single_sense(enriched))
+            else:
+                for assignment in await disambiguate_senses(enriched):
+                    deck.add(assignment)
+
+    print("Generated: vocabulary.apkg")
+
+asyncio.run(create_anki_deck())
+```
 
 ## Development
 
@@ -145,6 +236,9 @@ The library is built as a layered pipeline:
 | L1 | `sentences.py` | `extract_sentences()` | Text → sentences (spaCy) |
 | L2 | `tokens.py` | `extract_tokens()` | Sentences → lemmatized tokens |
 | L3 | `vocabulary.py` | `build_vocabulary()` | Tokens → frequency data |
+| L4 | `dictionary.py` | `Dictionary.lookup()` | Wiktionary lookups (kaikki.org) |
+| L5 | `pipeline.py` | `enrich_lemma()`, `disambiguate_senses()` | Enrichment + LLM disambiguation |
+| L6 | `anki.py` | `AnkiDeckBuilder` | Export to Anki `.apkg` format |
 
 ## License
 

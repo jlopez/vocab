@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 import uuid
 from pathlib import Path
@@ -21,6 +22,12 @@ CARD_CSS = """\
   font-size: 24px;
   text-align: center;
 }
+.front .example-translation {
+  font-size: 16px;
+  font-style: italic;
+  color: #666;
+  margin-top: 15px;
+}
 .back {
   text-align: center;
 }
@@ -32,6 +39,18 @@ CARD_CSS = """\
 .ipa {
   font-family: "Doulos SIL", "Noto Sans", serif;
   color: #555;
+  text-align: center;
+  margin: 10px 0;
+}
+.word-display {
+  font-size: 14px;
+  color: #666;
+  text-align: center;
+  margin: 5px 0;
+}
+.etymology {
+  font-size: 14px;
+  color: #777;
   text-align: center;
   margin: 10px 0;
 }
@@ -52,21 +71,28 @@ CARD_CSS = """\
 
 # Card template
 FRONT_TEMPLATE = """\
-<div class="front">{{Translation}}</div>
+<div class="front">
+  <div>{{Translation}}</div>
+  {{#ExampleTranslation}}
+  <div class="example-translation">{{ExampleTranslation}}</div>
+  {{/ExampleTranslation}}
+</div>
 """
 
 BACK_TEMPLATE = """\
 <div class="back">
   <div class="word">{{Word}}</div>
   {{#IPA}}<div class="ipa">{{IPA}}</div>{{/IPA}}
+  {{#WordDisplay}}<div class="word-display">{{WordDisplay}}</div>{{/WordDisplay}}
+  {{#Etymology}}<div class="etymology">{{Etymology}}</div>{{/Etymology}}
   {{#Examples}}<div class="examples">{{Examples}}</div>{{/Examples}}
   {{#Forms}}<div class="forms">Forms: {{Forms}}</div>{{/Forms}}
 </div>
 """
 
 
-# Namespace UUID for generating deterministic IDs
-_VOCAB_NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+# Namespace UUID for generating deterministic IDs (derived from project URL)
+_VOCAB_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/jlopez/vocab")
 
 
 def _generate_model_id(deck_name: str, language: str) -> int:
@@ -91,8 +117,30 @@ def _generate_deck_id(deck_name: str, language: str) -> int:
     return int(uid) >> 96  # Use top 32 bits
 
 
+def _generate_note_guid(deck_name: str, language: str, sense_id: str) -> str:
+    """Generate a stable GUID for a note based on deck context and sense ID.
+
+    Uses UUIDv5 to ensure the same sense in the same deck always produces
+    the same GUID. This allows Anki to recognize updated cards (e.g.,
+    improved examples) as the same note, preserving review history.
+
+    Args:
+        deck_name: Name of the Anki deck.
+        language: Source language code (e.g., "fr").
+        sense_id: The Kaikki sense ID (e.g., "en-table-fr-noun-7IF1wlIK").
+
+    Returns:
+        A stable GUID string for use with genanki.
+    """
+    name = f"{deck_name}:{language}:sense:{sense_id}"
+    uid = uuid.uuid5(_VOCAB_NAMESPACE, name)
+    return str(uid)
+
+
 def _format_examples(assignment: SenseAssignment) -> str:
-    """Format example sentences with guillemets and highlighted word.
+    """Format example sentences with highlighted word.
+
+    Includes the dictionary example (if available) followed by book examples.
 
     Args:
         assignment: SenseAssignment containing examples.
@@ -100,32 +148,63 @@ def _format_examples(assignment: SenseAssignment) -> str:
     Returns:
         HTML-formatted examples string.
     """
-    examples_html: list[str] = []
+    sentences: list[str] = []
     word = assignment.lemma.lemma
 
+    # Dictionary example first (if available)
+    sense = assignment.word.senses[assignment.sense]
+    if sense.example and sense.example.text:
+        sentences.append(sense.example.text)
+
+    # Book examples
     for idx in assignment.examples:
-        sentence = assignment.lemma.examples[idx].sentence
-        # Highlight the word in the sentence (case-insensitive)
+        sentences.append(assignment.lemma.examples[idx].sentence)
+
+    # Format all uniformly
+    examples_html: list[str] = []
+    for sentence in sentences:
         highlighted = _highlight_word(sentence, word)
-        examples_html.append(f'<div class="example">« {highlighted} »</div>')
+        examples_html.append(f'<div class="example">{highlighted}</div>')
 
     return "\n".join(examples_html)
 
 
+def _format_example_translation(assignment: SenseAssignment) -> str:
+    """Format the dictionary example translation for the front of the card.
+
+    Args:
+        assignment: SenseAssignment containing the sense.
+
+    Returns:
+        HTML-formatted example translation, or empty string if not available.
+    """
+    sense = assignment.word.senses[assignment.sense]
+    if not sense.example or not sense.example.translation:
+        return ""
+
+    word = assignment.lemma.lemma
+    highlighted = _highlight_word(sense.example.translation, word)
+    return highlighted
+
+
 def _highlight_word(sentence: str, word: str) -> str:
     """Highlight occurrences of a word in a sentence.
+
+    HTML-escapes the sentence first, then applies highlighting.
 
     Args:
         sentence: The sentence text.
         word: The word to highlight.
 
     Returns:
-        Sentence with word wrapped in <b> tags.
+        HTML-escaped sentence with word wrapped in <b> tags.
     """
+    escaped = html.escape(sentence)
+    escaped_word = html.escape(word)
     return re.sub(
-        re.escape(word),
+        re.escape(escaped_word),
         lambda m: f"<b>{m.group()}</b>",
-        sentence,
+        escaped,
         flags=re.IGNORECASE,
     )
 
@@ -174,8 +253,11 @@ class AnkiDeckBuilder:
             f"Vocab {source_language}",
             fields=[
                 {"name": "Translation"},
+                {"name": "ExampleTranslation"},
                 {"name": "Word"},
                 {"name": "IPA"},
+                {"name": "WordDisplay"},
+                {"name": "Etymology"},
                 {"name": "Examples"},
                 {"name": "Forms"},
             ],
@@ -204,16 +286,32 @@ class AnkiDeckBuilder:
         """
         sense = entry.word.senses[entry.sense]
 
-        # Build field values
-        translation = sense.translation
-        word = entry.word.word
-        ipa = entry.word.ipa or ""
+        # Build field values (escape plain text fields for HTML safety)
+        translation = html.escape(sense.translation)
+        example_translation = _format_example_translation(entry)
+        word = html.escape(entry.word.word)
+        ipa = html.escape(entry.word.ipa or "")
+        word_display = html.escape(entry.word.word_display or "")
+        etymology = html.escape(entry.word.etymology or "")
         examples = _format_examples(entry)
-        forms = _format_forms(entry)
+        forms = html.escape(_format_forms(entry))
+
+        # Use sense ID for stable GUID so updates preserve review history
+        guid = _generate_note_guid(self._deck_name, self._source_language, sense.id)
 
         note = genanki.Note(
             model=self._model,
-            fields=[translation, word, ipa, examples, forms],
+            fields=[
+                translation,
+                example_translation,
+                word,
+                ipa,
+                word_display,
+                etymology,
+                examples,
+                forms,
+            ],
+            guid=guid,
         )
         self._deck.add_note(note)
         self._cards_added += 1
