@@ -13,18 +13,18 @@ The pipeline processes vocabulary in three stages:
 
 ```
 ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│  generate_enriched  │     │  disambiguate       │     │  AnkiDeckBuilder    │
-│  _lemmas()          │────▶│  _senses()          │────▶│  .add()             │
+│    enrich_lemma()   │     │  disambiguate       │     │  AnkiDeckBuilder    │
+│                     │────▶│  _senses()          │────▶│  .add()             │
 └─────────────────────┘     └─────────────────────┘     └─────────────────────┘
-   Vocabulary + Dict           LLM (when needed)           genanki
+   LemmaEntry + Dict           LLM (when needed)           genanki
    → EnrichedLemma             → SenseAssignment           → .apkg
 ```
 
 ### Stage 1: Enrichment
 
-- **Input**: `Vocabulary`, `Dictionary`
-- **Output**: `Iterator[EnrichedLemma]`
-- **Responsibility**: Look up each lemma in the dictionary by (word, POS), yield only those with matches
+- **Input**: `LemmaEntry`, `Dictionary`
+- **Output**: `EnrichedLemma | None`
+- **Responsibility**: Look up a lemma in the dictionary by (word, POS), return an `EnrichedLemma` if matches found, else `None`
 
 ### Stage 2: Disambiguation
 
@@ -326,11 +326,11 @@ def test_dictionary_entry_from_kaikki():
 
 ### Goal
 
-Implement `generate_enriched_lemmas()` to produce `EnrichedLemma` objects from a `Vocabulary`.
+Implement `enrich_lemma()` to produce `EnrichedLemma` objects from a `LemmaEntry`.
 
 ### Deliverables
 
-- `src/vocab/pipeline.py` with `EnrichedLemma` dataclass and `generate_enriched_lemmas()`
+- `src/vocab/pipeline.py` with `EnrichedLemma` dataclass and `enrich_lemma()`
 - Unit tests
 - Harness script `data/phase-2.py`
 
@@ -346,28 +346,26 @@ class EnrichedLemma:
     words: list[DictionaryEntry]  # Invariant: len >= 1
 
 
-def generate_enriched_lemmas(
-    vocabulary: Vocabulary,
+def enrich_lemma(
+    lemma_entry: LemmaEntry,
     dictionary: Dictionary,
-) -> Iterator[EnrichedLemma]:
-    """Generate enriched lemmas from vocabulary.
+) -> EnrichedLemma | None:
+    """Enrich a single lemma with dictionary data.
 
-    For each LemmaEntry in the vocabulary, looks up matching dictionary
-    entries by (word, POS). Only yields entries with at least one match.
+    Looks up matching dictionary entries by (word, POS).
 
     Args:
-        vocabulary: Vocabulary to process.
+        lemma_entry: The lemma entry to enrich.
         dictionary: Dictionary for lookups.
 
-    Yields:
-        EnrichedLemma for each lemma with dictionary matches.
+    Returns:
+        EnrichedLemma if dictionary matches exist, None otherwise.
     """
-    for lemma_by_pos in vocabulary.entries.values():
-        for lemma_entry in lemma_by_pos.values():
-            kaikki_pos = SPACY_TO_KAIKKI.get(lemma_entry.pos, [])
-            words = dictionary.lookup(lemma_entry.lemma, pos=kaikki_pos or None)
-            if words:
-                yield EnrichedLemma(lemma=lemma_entry, words=words)
+    kaikki_pos = SPACY_TO_KAIKKI.get(lemma_entry.pos, [])
+    words = dictionary.lookup(lemma_entry.lemma, pos=kaikki_pos or None)
+    if words:
+        return EnrichedLemma(lemma=lemma_entry, words=words)
+    return None
 ```
 
 ### Files to Create
@@ -387,7 +385,7 @@ def generate_enriched_lemmas(
 import json
 from vocab import Vocabulary
 from vocab.dictionary import Dictionary
-from vocab.pipeline import generate_enriched_lemmas
+from vocab.pipeline import enrich_lemma
 
 with open("phase4-lg.json") as f:
     vocab = Vocabulary.from_dict(json.load(f))
@@ -400,36 +398,41 @@ matched = 0
 multi_word = 0
 multi_sense = 0
 
-for enriched in generate_enriched_lemmas(vocab, dictionary):
+for lemma_entry in vocab:
     total += 1
-    matched += 1
-    if len(enriched.words) > 1:
-        multi_word += 1
-    if any(len(w.senses) > 1 for w in enriched.words):
-        multi_sense += 1
+    enriched = enrich_lemma(lemma_entry, dictionary)
+    if enriched:
+        matched += 1
+        if len(enriched.words) > 1:
+            multi_word += 1
+        if any(len(w.senses) > 1 for w in enriched.words):
+            multi_sense += 1
 
-print(f"Vocabulary entries: {sum(len(v) for v in vocab.entries.values())}")
+print(f"Vocabulary entries: {total}")
 print(f"Enriched lemmas: {matched}")
 print(f"Multiple dictionary entries: {multi_word}")
 print(f"Multiple senses: {multi_sense}")
 
 # Show sample
-for i, enriched in enumerate(generate_enriched_lemmas(vocab, dictionary)):
-    if i >= 5:
-        break
-    print(f"\n{enriched.lemma.lemma} ({enriched.lemma.pos}):")
-    for w in enriched.words:
-        print(f"  {w.word} [{w.pos}] - {len(w.senses)} senses")
-        for s in w.senses[:2]:
-            print(f"    - {s.translation[:50]}")
+count = 0
+for lemma_entry in vocab:
+    enriched = enrich_lemma(lemma_entry, dictionary)
+    if enriched:
+        print(f"\n{enriched.lemma.lemma} ({enriched.lemma.pos}):")
+        for w in enriched.words:
+            print(f"  {w.word} [{w.pos}] - {len(w.senses)} senses")
+            for s in w.senses[:2]:
+                print(f"    - {s.translation[:50]}")
+        count += 1
+        if count >= 5:
+            break
 ```
 
 ### Acceptance Criteria
 
 - [x] `EnrichedLemma` dataclass with `lemma` and `words` fields
-- [x] `generate_enriched_lemmas()` yields only lemmas with dictionary matches
+- [x] `enrich_lemma()` returns `EnrichedLemma` for matches, `None` otherwise
 - [x] POS mapping correctly converts spaCy → kaikki
-- [x] Lemmas with no dictionary match are skipped (not yielded)
 - [x] `uv run ruff check .` passes
 - [x] `uv run mypy .` passes
 - [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
@@ -598,7 +601,7 @@ import json
 from vocab import Vocabulary
 from vocab.dictionary import Dictionary
 from vocab.pipeline import (
-    generate_enriched_lemmas,
+    enrich_lemma,
     needs_disambiguation,
     assign_single_sense,
     disambiguate_senses,
@@ -619,7 +622,11 @@ async def main():
 
     llm_batch: list[EnrichedLemma] = []
 
-    for enriched in generate_enriched_lemmas(vocab, dictionary):
+    for lemma_entry in vocab:
+        enriched = enrich_lemma(lemma_entry, dictionary)
+        if not enriched:
+            continue
+
         if not needs_disambiguation(enriched):
             trivial_count += 1
             assignments.append(assign_single_sense(enriched))
@@ -808,7 +815,7 @@ from pathlib import Path
 from vocab import Vocabulary
 from vocab.dictionary import Dictionary
 from vocab.pipeline import (
-    generate_enriched_lemmas,
+    enrich_lemma,
     needs_disambiguation,
     assign_single_sense,
     disambiguate_senses,
@@ -831,7 +838,11 @@ async def main():
     ) as deck:
         llm_batch: list = []
 
-        for enriched in generate_enriched_lemmas(vocab, dictionary):
+        for lemma_entry in vocab:
+            enriched = enrich_lemma(lemma_entry, dictionary)
+            if not enriched:
+                continue
+
             if not needs_disambiguation(enriched):
                 deck.add(assign_single_sense(enriched))
             else:

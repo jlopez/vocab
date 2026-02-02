@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from dataclasses import dataclass
 
 import anthropic
 from pydantic import BaseModel
 
 from vocab.dictionary import LANGUAGE_NAMES, SPACY_TO_KAIKKI, Dictionary, DictionaryEntry
-from vocab.models import LemmaEntry, Vocabulary
+from vocab.models import LemmaEntry
 
 logger = logging.getLogger(__name__)
 
@@ -79,28 +78,26 @@ class DisambiguationResponse(BaseModel):
     assignments: list[SentenceAssignment]
 
 
-def generate_enriched_lemmas(
-    vocabulary: Vocabulary,
+def enrich_lemma(
+    lemma_entry: LemmaEntry,
     dictionary: Dictionary,
-) -> Iterator[EnrichedLemma]:
-    """Generate enriched lemmas from vocabulary.
+) -> EnrichedLemma | None:
+    """Enrich a single lemma with dictionary data.
 
-    For each LemmaEntry in the vocabulary, looks up matching dictionary
-    entries by (word, POS). Only yields entries with at least one match.
+    Looks up matching dictionary entries by (word, POS).
 
     Args:
-        vocabulary: Vocabulary to process.
+        lemma_entry: The lemma entry to enrich.
         dictionary: Dictionary for lookups.
 
-    Yields:
-        EnrichedLemma for each lemma with dictionary matches.
+    Returns:
+        EnrichedLemma if dictionary matches exist, None otherwise.
     """
-    for lemma_by_pos in vocabulary.entries.values():
-        for lemma_entry in lemma_by_pos.values():
-            kaikki_pos = SPACY_TO_KAIKKI.get(lemma_entry.pos, [])
-            words = dictionary.lookup(lemma_entry.lemma, pos=kaikki_pos or None)
-            if words:
-                yield EnrichedLemma(lemma=lemma_entry, words=words)
+    kaikki_pos = SPACY_TO_KAIKKI.get(lemma_entry.pos, [])
+    words = dictionary.lookup(lemma_entry.lemma, pos=kaikki_pos or None)
+    if words:
+        return EnrichedLemma(lemma=lemma_entry, words=words)
+    return None
 
 
 def needs_disambiguation(entry: EnrichedLemma) -> bool:

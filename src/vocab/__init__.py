@@ -23,7 +23,7 @@ from vocab.pipeline import (
     SenseAssignment,
     assign_single_sense,
     disambiguate_senses,
-    generate_enriched_lemmas,
+    enrich_lemma,
     needs_disambiguation,
 )
 from vocab.sentences import SpacyModelNotFoundError, extract_sentences
@@ -50,9 +50,9 @@ __all__ = [
     "assign_single_sense",
     "build_vocabulary",
     "disambiguate_senses",
+    "enrich_lemma",
     "extract_chapters",
     "extract_sentences",
     "extract_tokens",
-    "generate_enriched_lemmas",
     "needs_disambiguation",
 ]

@@ -503,6 +503,45 @@ class TestDuplicateTokenInSentence:
         assert len(vocab.entries["chat"]["NOUN"].examples) == 1
 
 
+class TestVocabularyIteration:
+    """Tests for Vocabulary iteration support."""
+
+    def test_iterating_yields_all_lemma_entries(self) -> None:
+        """Iterating over Vocabulary should yield all LemmaEntry objects."""
+        entries = {
+            "chat": {
+                "NOUN": LemmaEntry(
+                    lemma="chat", pos="NOUN", frequency=5, forms={"chat": 5}, examples=[]
+                ),
+            },
+            "run": {
+                "VERB": LemmaEntry(
+                    lemma="run", pos="VERB", frequency=3, forms={"run": 2, "runs": 1}, examples=[]
+                ),
+                "NOUN": LemmaEntry(
+                    lemma="run", pos="NOUN", frequency=1, forms={"run": 1}, examples=[]
+                ),
+            },
+        }
+        vocab = Vocabulary(entries=entries, language="en")
+
+        result = list(vocab)
+
+        assert len(result) == 3
+        assert all(isinstance(entry, LemmaEntry) for entry in result)
+        # Check all entries are present (order not guaranteed)
+        lemma_pos_pairs = {(e.lemma, e.pos) for e in result}
+        assert lemma_pos_pairs == {("chat", "NOUN"), ("run", "VERB"), ("run", "NOUN")}
+
+    def test_iterating_empty_vocabulary(self) -> None:
+        """Iterating over empty Vocabulary should yield nothing."""
+        vocab = Vocabulary(entries={}, language="en")
+
+        result = list(vocab)
+
+        assert result == []
+
+
 class TestSkipEmptyPos:
     """Tests for skipping tokens with empty POS."""
 

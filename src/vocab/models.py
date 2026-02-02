@@ -1,5 +1,6 @@
 """Data models for vocabulary extraction."""
 
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -111,6 +112,15 @@ class Vocabulary:
 
     entries: dict[str, dict[str, LemmaEntry]]
     language: str
+
+    def __iter__(self) -> Iterator[LemmaEntry]:
+        """Iterate over all LemmaEntry objects in the vocabulary.
+
+        Yields:
+            Each LemmaEntry in the vocabulary.
+        """
+        for pos_dict in self.entries.values():
+            yield from pos_dict.values()
 
     def to_dict(self) -> dict[str, Any]:
         """Export vocabulary as a JSON-serializable dictionary.
