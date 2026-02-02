@@ -1,6 +1,12 @@
 """Vocabulary extraction from ePub files."""
 
-from vocab.dictionary import Dictionary, DictionaryEntry
+from vocab.dictionary import (
+    SPACY_TO_KAIKKI,
+    Dictionary,
+    DictionaryEntry,
+    DictionaryExample,
+    DictionarySense,
+)
 from vocab.epub import extract_chapters
 from vocab.models import (
     Chapter,
@@ -19,8 +25,11 @@ __all__ = [
     "Chapter",
     "Dictionary",
     "DictionaryEntry",
+    "DictionaryExample",
+    "DictionarySense",
     "Example",
     "LemmaEntry",
+    "SPACY_TO_KAIKKI",
     "Sentence",
     "SentenceLocation",
     "SpacyModelNotFoundError",
