@@ -11,6 +11,7 @@ dependencies = [
     "anthropic>=0.77.0",
     "beautifulsoup4>=4.14.3",
     "ebooklib>=0.20",
+    "genanki>=0.13.1",
     "httpx>=0.28.1",
     "lxml>=6.0.2",
     "pydantic>=2.12.5",
@@ -98,6 +99,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["spacy", "spacy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["genanki", "genanki.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

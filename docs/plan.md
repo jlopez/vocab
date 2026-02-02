@@ -863,16 +863,16 @@ asyncio.run(main())
 
 ### Acceptance Criteria
 
-- [ ] `AnkiDeckBuilder` is a context manager
-- [ ] `.add()` accepts `SenseAssignment` and queues a card
-- [ ] On context exit, writes valid `.apkg` file
-- [ ] Card front shows English translation
-- [ ] Card back shows word, IPA, examples, forms
-- [ ] Examples are formatted with guillemets and word highlighted
-- [ ] CSS styling applied correctly
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `AnkiDeckBuilder` is a context manager
+- [x] `.add()` accepts `SenseAssignment` and queues a card
+- [x] On context exit, writes valid `.apkg` file
+- [x] Card front shows English translation
+- [x] Card back shows word, IPA, examples, forms
+- [x] Examples are formatted with guillemets and word highlighted
+- [x] CSS styling applied correctly
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
 
