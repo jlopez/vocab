@@ -7,6 +7,9 @@ from vocab.models import Example, LemmaEntry, SentenceLocation, Vocabulary
 from vocab.sentences import extract_sentences
 from vocab.tokens import extract_tokens
 
+# POS tags to skip during vocabulary building
+SKIP_POS: set[str] = {""}
+
 
 def build_vocabulary(
     epub_path: Path,
@@ -33,10 +36,10 @@ def build_vocabulary(
     if max_examples < 0:
         raise ValueError("max_examples must be >= 0")
 
-    # Track lemma data during aggregation
-    lemma_frequency: dict[str, int] = {}
-    lemma_forms: dict[str, dict[str, int]] = {}
-    lemma_examples: dict[str, list[Example]] = {}
+    # Track data during aggregation, keyed by (lemma, pos) tuple
+    frequency: dict[tuple[str, str], int] = {}
+    forms: dict[tuple[str, str], dict[str, int]] = {}
+    examples: dict[tuple[str, str], list[Example]] = {}
 
     for chapter in extract_chapters(epub_path):
         location_base = SentenceLocation(
@@ -53,34 +56,41 @@ def build_vocabulary(
             )
 
             for token in extract_tokens(sentence.text, location, language):
-                lemma = token.lemma
+                # Skip tokens with blocked POS
+                if token.pos in SKIP_POS:
+                    continue
+
+                key = (token.lemma, token.pos)
 
                 # Update frequency
-                lemma_frequency[lemma] = lemma_frequency.get(lemma, 0) + 1
+                frequency[key] = frequency.get(key, 0) + 1
 
                 # Update forms
-                if lemma not in lemma_forms:
-                    lemma_forms[lemma] = {}
-                forms = lemma_forms[lemma]
-                forms[token.original] = forms.get(token.original, 0) + 1
+                if key not in forms:
+                    forms[key] = {}
+                key_forms = forms[key]
+                key_forms[token.original] = key_forms.get(token.original, 0) + 1
 
                 # Add example if under limit and not a duplicate sentence
-                if lemma not in lemma_examples:
-                    lemma_examples[lemma] = []
-                examples = lemma_examples[lemma]
-                if len(examples) < max_examples and not any(
-                    ex.sentence == token.sentence for ex in examples
+                if key not in examples:
+                    examples[key] = []
+                key_examples = examples[key]
+                if len(key_examples) < max_examples and not any(
+                    ex.sentence == token.sentence for ex in key_examples
                 ):
-                    examples.append(Example(sentence=token.sentence, location=token.location))
+                    key_examples.append(Example(sentence=token.sentence, location=token.location))
 
-    # Build final vocabulary
-    entries: dict[str, LemmaEntry] = {}
-    for lemma, frequency in lemma_frequency.items():
-        entries[lemma] = LemmaEntry(
+    # Build final vocabulary with nested structure: entries[lemma][pos] = LemmaEntry
+    entries: dict[str, dict[str, LemmaEntry]] = {}
+    for (lemma, pos), freq in frequency.items():
+        if lemma not in entries:
+            entries[lemma] = {}
+        entries[lemma][pos] = LemmaEntry(
             lemma=lemma,
-            frequency=frequency,
-            forms=lemma_forms[lemma],
-            examples=lemma_examples[lemma],
+            pos=pos,
+            frequency=freq,
+            forms=forms[(lemma, pos)],
+            examples=examples[(lemma, pos)],
         )
 
     return Vocabulary(entries=entries, language=language)

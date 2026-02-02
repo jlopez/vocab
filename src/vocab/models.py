@@ -83,16 +83,18 @@ class Example:
 
 @dataclass
 class LemmaEntry:
-    """Aggregated data for a single lemma.
+    """Aggregated data for a single lemma with a specific part-of-speech.
 
     Attributes:
         lemma: The lemmatized form.
+        pos: Universal part-of-speech tag (e.g., "NOUN", "VERB").
         frequency: Total count of occurrences.
         forms: Mapping of original forms to their counts.
         examples: List of example sentences with their locations.
     """
 
     lemma: str
+    pos: str
     frequency: int
     forms: dict[str, int]
     examples: list[Example]
@@ -103,39 +105,18 @@ class Vocabulary:
     """Vocabulary extracted from a document.
 
     Attributes:
-        entries: Mapping of lemma to LemmaEntry.
+        entries: Nested mapping of lemma -> pos -> LemmaEntry.
         language: Language code of the vocabulary.
     """
 
-    entries: dict[str, LemmaEntry]
+    entries: dict[str, dict[str, LemmaEntry]]
     language: str
-
-    def top(self, n: int) -> list[LemmaEntry]:
-        """Return top n lemmas by frequency.
-
-        Args:
-            n: Number of top entries to return (must be >= 1).
-
-        Returns:
-            List of LemmaEntry objects sorted by frequency (descending).
-
-        Raises:
-            ValueError: If n < 1.
-        """
-        if n < 1:
-            raise ValueError("n must be >= 1")
-        sorted_entries = sorted(
-            self.entries.values(),
-            key=lambda e: e.frequency,
-            reverse=True,
-        )
-        return sorted_entries[:n]
 
     def to_dict(self) -> dict[str, Any]:
         """Export vocabulary as a JSON-serializable dictionary.
 
         Returns:
             Dictionary with language and entries, where each entry
-            contains lemma, frequency, forms, and examples.
+            contains lemma, pos, frequency, forms, and examples.
         """
         return asdict(self)
