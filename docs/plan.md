@@ -426,13 +426,13 @@ for i, enriched in enumerate(generate_enriched_lemmas(vocab, dictionary)):
 
 ### Acceptance Criteria
 
-- [ ] `EnrichedLemma` dataclass with `lemma` and `words` fields
-- [ ] `generate_enriched_lemmas()` yields only lemmas with dictionary matches
-- [ ] POS mapping correctly converts spaCy → kaikki
-- [ ] Lemmas with no dictionary match are skipped (not yielded)
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `EnrichedLemma` dataclass with `lemma` and `words` fields
+- [x] `generate_enriched_lemmas()` yields only lemmas with dictionary matches
+- [x] POS mapping correctly converts spaCy → kaikki
+- [x] Lemmas with no dictionary match are skipped (not yielded)
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
 
