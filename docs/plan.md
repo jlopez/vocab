@@ -661,17 +661,17 @@ asyncio.run(main())
 
 ### Acceptance Criteria
 
-- [ ] `SenseAssignment` dataclass with `lemma`, `examples`, `word`, `sense` fields
-- [ ] `needs_disambiguation()` returns True for multi-word or multi-sense entries
-- [ ] `assign_single_sense()` works for trivial cases
-- [ ] `assign_single_sense()` raises AssertionError for non-trivial cases
-- [ ] `disambiguate_senses()` calls LLM and parses response
-- [ ] `disambiguate_senses()` raises AssertionError for trivial cases
-- [ ] Unassignable examples are logged and omitted
-- [ ] Unit tests mock LLM responses
-- [ ] `uv run ruff check .` passes
-- [ ] `uv run mypy .` passes
-- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+- [x] `SenseAssignment` dataclass with `lemma`, `examples`, `word`, `sense` fields
+- [x] `needs_disambiguation()` returns True for multi-word or multi-sense entries
+- [x] `assign_single_sense()` works for trivial cases
+- [x] `assign_single_sense()` raises AssertionError for non-trivial cases
+- [x] `disambiguate_senses()` calls LLM and parses response
+- [x] `disambiguate_senses()` raises AssertionError for trivial cases
+- [x] Unassignable examples are logged and omitted
+- [x] Unit tests mock LLM responses
+- [x] `uv run ruff check .` passes
+- [x] `uv run mypy .` passes
+- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
 
