@@ -1,5 +1,6 @@
 """Vocabulary extraction from ePub files."""
 
+from vocab.anki import AnkiDeckBuilder
 from vocab.dictionary import (
     SPACY_TO_KAIKKI,
     Dictionary,
@@ -30,6 +31,7 @@ from vocab.tokens import extract_tokens
 from vocab.vocabulary import build_vocabulary
 
 __all__ = [
+    "AnkiDeckBuilder",
     "Chapter",
     "Dictionary",
     "DictionaryEntry",
