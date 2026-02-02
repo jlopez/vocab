@@ -17,6 +17,7 @@ from vocab.models import (
     Token,
     Vocabulary,
 )
+from vocab.pipeline import EnrichedLemma, generate_enriched_lemmas
 from vocab.sentences import SpacyModelNotFoundError, extract_sentences
 from vocab.tokens import extract_tokens
 from vocab.vocabulary import build_vocabulary
@@ -27,6 +28,7 @@ __all__ = [
     "DictionaryEntry",
     "DictionaryExample",
     "DictionarySense",
+    "EnrichedLemma",
     "Example",
     "LemmaEntry",
     "SPACY_TO_KAIKKI",
@@ -39,4 +41,5 @@ __all__ = [
     "extract_chapters",
     "extract_sentences",
     "extract_tokens",
+    "generate_enriched_lemmas",
 ]
