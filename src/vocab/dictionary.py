@@ -15,6 +15,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Mapping from spaCy Universal POS tags to kaikki.org POS tags
+SPACY_TO_KAIKKI: dict[str, list[str]] = {
+    "NOUN": ["noun"],
+    "VERB": ["verb"],
+    "ADJ": ["adj"],
+    "ADV": ["adv"],
+    "PROPN": ["name"],
+    "INTJ": ["intj"],
+    "ADP": ["prep", "prep_phrase", "postp"],
+    "PRON": ["pron"],
+    "DET": ["det", "article"],
+    "CONJ": ["conj"],
+    "CCONJ": ["conj"],
+    "SCONJ": ["conj"],
+    "NUM": ["num"],
+    "PART": ["particle"],
+    "PUNCT": ["punct"],
+    "SYM": ["symbol"],
+    "X": ["phrase", "proverb", "contraction", "character"],
+}
+
 # Mapping of language codes to kaikki.org URLs
 KAIKKI_URLS: dict[str, str] = {
     "fr": "https://kaikki.org/dictionary/French/kaikki.org-dictionary-French.jsonl",
@@ -38,28 +59,83 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "vocab"
 
 
 @dataclass
+class DictionaryExample:
+    """Example sentence from Wiktionary."""
+
+    text: str
+    translation: str
+
+    @classmethod
+    def from_kaikki(cls, raw: dict[str, Any]) -> DictionaryExample:
+        """Parse a kaikki example object."""
+        return cls(
+            text=raw.get("text", ""),
+            translation=raw.get("translation") or raw.get("english", ""),
+        )
+
+
+@dataclass
+class DictionarySense:
+    """A single sense of a dictionary entry."""
+
+    id: str
+    translation: str
+    example: DictionaryExample | None
+
+    @classmethod
+    def from_kaikki(cls, raw: dict[str, Any]) -> DictionarySense:
+        """Parse a kaikki sense object."""
+        examples = raw.get("examples", [])
+        example = DictionaryExample.from_kaikki(examples[0]) if examples else None
+
+        glosses = raw.get("glosses", [])
+        translation = glosses[0] if glosses else ""
+
+        return cls(
+            id=raw.get("id", ""),
+            translation=translation,
+            example=example,
+        )
+
+
+@dataclass
 class DictionaryEntry:
-    """Dictionary entry with pronunciation and translations.
+    """A dictionary entry from kaikki (one per etymology).
 
     Attributes:
-        lemma: The word being looked up.
-        language: Source language code (e.g., "fr").
+        word: The headword.
+        pos: Part of speech (kaikki format: "noun", "verb", etc.).
         ipa: IPA pronunciation, if available.
-        gender: Grammatical gender ("m" or "f") for nouns, None otherwise.
-        pos: Part of speech (noun, verb, adj, adv, etc.).
-        translations_en: English translations (from Wiktionary glosses).
-        target_language: Target language code if translations requested, else None.
-        target_translations: Translations in target language.
+        etymology: Etymology text, if available.
+        senses: List of word senses with translations and examples.
     """
 
-    lemma: str
-    language: str
+    word: str
+    pos: str
     ipa: str | None
-    gender: str | None
-    pos: str | None
-    translations_en: list[str]
-    target_language: str | None
-    target_translations: list[str]
+    etymology: str | None
+    senses: list[DictionarySense]
+
+    @classmethod
+    def from_kaikki(cls, raw: dict[str, Any]) -> DictionaryEntry:
+        """Parse a kaikki dictionary entry."""
+        return cls(
+            word=raw.get("word", ""),
+            pos=raw.get("pos", ""),
+            ipa=cls._extract_ipa(raw),
+            etymology=raw.get("etymology_text"),
+            senses=[DictionarySense.from_kaikki(s) for s in raw.get("senses", [])],
+        )
+
+    @staticmethod
+    def _extract_ipa(raw: dict[str, Any]) -> str | None:
+        """Extract first available IPA pronunciation."""
+        for sound in raw.get("sounds", []):
+            ipa = sound.get("ipa")
+            # Check for string type (kaikki sometimes has lists) and non-empty
+            if isinstance(ipa, str) and ipa:
+                return ipa
+        return None
 
 
 class Dictionary:
@@ -215,141 +291,26 @@ class Dictionary:
         self._save_index(index)
         self._data = index
 
-    def lookup(
-        self,
-        lemma: str,
-        target_language: str | None = None,
-    ) -> DictionaryEntry | None:
-        """Look up a word in the dictionary.
+    def lookup(self, word: str, pos: list[str] | None = None) -> list[DictionaryEntry]:
+        """Look up a word, optionally filtering by POS.
 
         Args:
-            lemma: Word to look up.
-            target_language: Optional target language for translations (e.g., "es").
-                If provided, target_translations will be populated.
+            word: Word to look up.
+            pos: List of kaikki POS tags to filter by (e.g., ["noun", "name"]).
+                 If None, returns all entries for the word.
 
         Returns:
-            DictionaryEntry if found, None otherwise.
+            List of DictionaryEntry objects, one per kaikki entry matching
+            the word and POS filter. Empty list if no matches.
         """
         self._ensure_loaded()
         assert self._data is not None
 
-        entries = self._data.get(lemma)
-        if not entries:
-            return None
+        raw_entries = self._data.get(word, [])
+        entries = [DictionaryEntry.from_kaikki(raw) for raw in raw_entries]
 
-        # Aggregate data from all entries (same word may have multiple POS)
-        ipa = self._extract_ipa(entries)
-        gender = self._extract_gender(entries)
-        pos = self._extract_pos(entries)
-        translations_en = self._extract_english_translations(entries)
-        target_translations = (
-            self._extract_target_translations(entries, target_language) if target_language else []
-        )
+        if pos:
+            entries = [e for e in entries if e.pos in pos]
 
-        return DictionaryEntry(
-            lemma=lemma,
-            language=self._language,
-            ipa=ipa,
-            gender=gender,
-            pos=pos,
-            translations_en=translations_en,
-            target_language=target_language,
-            target_translations=target_translations,
-        )
-
-    def _extract_ipa(self, entries: list[dict[str, Any]]) -> str | None:
-        """Extract IPA pronunciation from entries."""
-        for entry in entries:
-            sounds = entry.get("sounds", [])
-            for sound in sounds:
-                ipa = sound.get("ipa")
-                if isinstance(ipa, str) and ipa:
-                    return ipa
-        return None
-
-    def _extract_gender(self, entries: list[dict[str, Any]]) -> str | None:
-        """Extract grammatical gender from entries (for nouns)."""
-        for entry in entries:
-            # Check tags
-            tags = entry.get("tags", [])
-            if "masculine" in tags:
-                return "m"
-            if "feminine" in tags:
-                return "f"
-
-            # Check head_templates
-            for template in entry.get("head_templates", []):
-                args = template.get("args", {})
-                # Common pattern: g or g1 contains gender
-                for key in ["g", "g1", "1"]:
-                    gender = args.get(key, "")
-                    if gender in ("m", "m-p", "mf", "m-f"):
-                        return "m"
-                    if gender in ("f", "f-p"):
-                        return "f"
-
-            # Check forms for gender markers
-            forms = entry.get("forms", [])
-            for form in forms:
-                form_tags = form.get("tags", [])
-                if "masculine" in form_tags:
-                    return "m"
-                if "feminine" in form_tags:
-                    return "f"
-
-        return None
-
-    def _extract_pos(self, entries: list[dict[str, Any]]) -> str | None:
-        """Extract primary part of speech from entries."""
-        # Prefer certain POS over others
-        pos_priority = ["noun", "verb", "adj", "adv", "prep", "conj", "pron", "det"]
-
-        found_pos: set[str] = set()
-        for entry in entries:
-            pos = entry.get("pos")
-            if pos:
-                found_pos.add(pos)
-
-        for preferred in pos_priority:
-            if preferred in found_pos:
-                return preferred
-
-        # Return first found if none in priority list
-        return next(iter(found_pos), None)
-
-    def _extract_english_translations(self, entries: list[dict[str, Any]]) -> list[str]:
-        """Extract English translations from glosses."""
-        translations: list[str] = []
-        seen: set[str] = set()
-
-        for entry in entries:
-            for sense in entry.get("senses", []):
-                for gloss in sense.get("glosses", []):
-                    # Clean up the gloss
-                    gloss = gloss.strip()
-                    if gloss and gloss not in seen:
-                        translations.append(gloss)
-                        seen.add(gloss)
-
-        return translations
-
-    def _extract_target_translations(
-        self, entries: list[dict[str, Any]], target_language: str
-    ) -> list[str]:
-        """Extract translations in the target language."""
-        target_name = LANGUAGE_NAMES.get(target_language, target_language)
-        translations: list[str] = []
-        seen: set[str] = set()
-
-        for entry in entries:
-            for sense in entry.get("senses", []):
-                for trans in sense.get("translations", []):
-                    # Check if this translation is for the target language
-                    lang = trans.get("lang", "")
-                    if lang.lower() == target_name.lower() or trans.get("code") == target_language:
-                        word = trans.get("word", "").strip()
-                        if word and word not in seen:
-                            translations.append(word)
-                            seen.add(word)
-
-        return translations
+        assert all(entry.senses for entry in entries), "Entry with no senses found"
+        return entries

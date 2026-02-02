@@ -10,8 +10,11 @@ import pytest
 from vocab.dictionary import (
     DEFAULT_CACHE_DIR,
     KAIKKI_URLS,
+    SPACY_TO_KAIKKI,
     Dictionary,
     DictionaryEntry,
+    DictionaryExample,
+    DictionarySense,
 )
 
 # Sample Wiktionary entries for testing
@@ -20,21 +23,18 @@ SAMPLE_ENTRIES: list[dict[str, Any]] = [
         "word": "chien",
         "pos": "noun",
         "sounds": [{"ipa": "/ʃjɛ̃/"}],
-        "tags": ["masculine"],
+        "etymology_text": "From Latin canis.",
         "senses": [
             {
+                "id": "fr-noun-chien-1",
                 "glosses": ["dog", "hound"],
-                "translations": [
-                    {"lang": "Spanish", "code": "es", "word": "perro"},
-                    {"lang": "Spanish", "code": "es", "word": "can"},
-                    {"lang": "Italian", "code": "it", "word": "cane"},
+                "examples": [
+                    {"text": "Le chien aboie.", "translation": "The dog barks."},
                 ],
             },
             {
+                "id": "fr-noun-chien-2",
                 "glosses": ["hammer (of a firearm)"],
-                "translations": [
-                    {"lang": "Spanish", "code": "es", "word": "martillo"},
-                ],
             },
         ],
     },
@@ -44,9 +44,10 @@ SAMPLE_ENTRIES: list[dict[str, Any]] = [
         "sounds": [{"ipa": "/mɑ̃.ʒe/"}],
         "senses": [
             {
+                "id": "fr-verb-manger-1",
                 "glosses": ["to eat"],
-                "translations": [
-                    {"lang": "Spanish", "code": "es", "word": "comer"},
+                "examples": [
+                    {"text": "Je mange une pomme.", "english": "I eat an apple."},
                 ],
             },
         ],
@@ -57,26 +58,8 @@ SAMPLE_ENTRIES: list[dict[str, Any]] = [
         "sounds": [{"ipa": "/bo/"}],
         "senses": [
             {
+                "id": "fr-adj-beau-1",
                 "glosses": ["beautiful", "handsome", "fine"],
-                "translations": [
-                    {"lang": "Spanish", "code": "es", "word": "hermoso"},
-                    {"lang": "Spanish", "code": "es", "word": "bello"},
-                ],
-            },
-        ],
-    },
-    # Entry with gender in head_templates
-    {
-        "word": "maison",
-        "pos": "noun",
-        "sounds": [{"ipa": "/mɛ.zɔ̃/"}],
-        "head_templates": [{"args": {"g": "f"}}],
-        "senses": [
-            {
-                "glosses": ["house", "home"],
-                "translations": [
-                    {"lang": "Spanish", "code": "es", "word": "casa"},
-                ],
             },
         ],
     },
@@ -90,6 +73,42 @@ SAMPLE_ENTRIES: list[dict[str, Any]] = [
             },
         ],
     },
+    # Multiple entries for same word (different etymologies)
+    {
+        "word": "faux",
+        "pos": "noun",
+        "sounds": [{"ipa": "/fo/"}],
+        "etymology_text": "From Latin falsus.",
+        "senses": [
+            {
+                "id": "fr-noun-faux-1",
+                "glosses": ["forgery", "fabrication"],
+            },
+        ],
+    },
+    {
+        "word": "faux",
+        "pos": "noun",
+        "sounds": [{"ipa": "/fo/"}],
+        "etymology_text": "From Latin falx.",
+        "senses": [
+            {
+                "id": "fr-noun-faux-2",
+                "glosses": ["scythe"],
+            },
+        ],
+    },
+    {
+        "word": "faux",
+        "pos": "adj",
+        "sounds": [{"ipa": "/fo/"}],
+        "senses": [
+            {
+                "id": "fr-adj-faux-1",
+                "glosses": ["false", "fake"],
+            },
+        ],
+    },
 ]
 
 
@@ -98,45 +117,154 @@ def create_sample_jsonl(entries: list[dict[str, Any]]) -> str:
     return "\n".join(json.dumps(entry) for entry in entries)
 
 
+class TestDictionaryExample:
+    """Tests for DictionaryExample dataclass."""
+
+    def test_from_kaikki_with_translation(self) -> None:
+        """Test parsing example with translation field."""
+        raw = {"text": "Le chien aboie.", "translation": "The dog barks."}
+        example = DictionaryExample.from_kaikki(raw)
+        assert example.text == "Le chien aboie."
+        assert example.translation == "The dog barks."
+
+    def test_from_kaikki_with_english(self) -> None:
+        """Test parsing example with english field (fallback)."""
+        raw = {"text": "Je mange.", "english": "I eat."}
+        example = DictionaryExample.from_kaikki(raw)
+        assert example.text == "Je mange."
+        assert example.translation == "I eat."
+
+    def test_from_kaikki_prefers_translation_over_english(self) -> None:
+        """Test that translation field is preferred over english."""
+        raw = {"text": "Test", "translation": "preferred", "english": "fallback"}
+        example = DictionaryExample.from_kaikki(raw)
+        assert example.translation == "preferred"
+
+    def test_from_kaikki_missing_fields(self) -> None:
+        """Test parsing example with missing fields."""
+        raw: dict[str, Any] = {}
+        example = DictionaryExample.from_kaikki(raw)
+        assert example.text == ""
+        assert example.translation == ""
+
+
+class TestDictionarySense:
+    """Tests for DictionarySense dataclass."""
+
+    def test_from_kaikki_full(self) -> None:
+        """Test parsing sense with all fields."""
+        raw = {
+            "id": "fr-noun-1",
+            "glosses": ["dog", "hound"],
+            "examples": [{"text": "Le chien.", "translation": "The dog."}],
+        }
+        sense = DictionarySense.from_kaikki(raw)
+        assert sense.id == "fr-noun-1"
+        assert sense.translation == "dog"  # First gloss
+        assert sense.example is not None
+        assert sense.example.text == "Le chien."
+
+    def test_from_kaikki_no_examples(self) -> None:
+        """Test parsing sense without examples."""
+        raw = {"id": "fr-noun-2", "glosses": ["hammer"]}
+        sense = DictionarySense.from_kaikki(raw)
+        assert sense.id == "fr-noun-2"
+        assert sense.translation == "hammer"
+        assert sense.example is None
+
+    def test_from_kaikki_empty_glosses(self) -> None:
+        """Test parsing sense with empty glosses."""
+        raw: dict[str, Any] = {"id": "test", "glosses": []}
+        sense = DictionarySense.from_kaikki(raw)
+        assert sense.translation == ""
+
+    def test_from_kaikki_missing_fields(self) -> None:
+        """Test parsing sense with missing fields."""
+        raw: dict[str, Any] = {}
+        sense = DictionarySense.from_kaikki(raw)
+        assert sense.id == ""
+        assert sense.translation == ""
+        assert sense.example is None
+
+
 class TestDictionaryEntry:
     """Tests for DictionaryEntry dataclass."""
 
-    def test_creation(self) -> None:
-        """Test basic creation of DictionaryEntry."""
-        entry = DictionaryEntry(
-            lemma="test",
-            language="fr",
-            ipa="/tɛst/",
-            gender="m",
-            pos="noun",
-            translations_en=["test", "trial"],
-            target_language="es",
-            target_translations=["prueba", "ensayo"],
-        )
-        assert entry.lemma == "test"
-        assert entry.language == "fr"
-        assert entry.ipa == "/tɛst/"
-        assert entry.gender == "m"
+    def test_from_kaikki_full(self) -> None:
+        """Test parsing entry with all fields."""
+        raw = {
+            "word": "chien",
+            "pos": "noun",
+            "sounds": [{"ipa": "/ʃjɛ̃/"}],
+            "etymology_text": "From Latin canis.",
+            "senses": [{"id": "fr-noun-1", "glosses": ["dog"]}],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word == "chien"
         assert entry.pos == "noun"
-        assert entry.translations_en == ["test", "trial"]
-        assert entry.target_language == "es"
-        assert entry.target_translations == ["prueba", "ensayo"]
+        assert entry.ipa == "/ʃjɛ̃/"
+        assert entry.etymology == "From Latin canis."
+        assert len(entry.senses) == 1
+        assert entry.senses[0].translation == "dog"
 
-    def test_creation_without_optional_fields(self) -> None:
-        """Test creation with None values for optional fields."""
-        entry = DictionaryEntry(
-            lemma="test",
-            language="fr",
-            ipa=None,
-            gender=None,
-            pos=None,
-            translations_en=[],
-            target_language=None,
-            target_translations=[],
-        )
+    def test_from_kaikki_no_ipa(self) -> None:
+        """Test parsing entry without IPA."""
+        raw = {"word": "test", "pos": "noun", "senses": []}
+        entry = DictionaryEntry.from_kaikki(raw)
         assert entry.ipa is None
-        assert entry.gender is None
-        assert entry.pos is None
+
+    def test_from_kaikki_ipa_from_multiple_sounds(self) -> None:
+        """Test extracting IPA from first sound with ipa field."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "sounds": [
+                {"audio": "file.mp3"},  # No IPA
+                {"ipa": "/tɛst/"},
+                {"ipa": "/tɛːst/"},  # Should use first IPA
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.ipa == "/tɛst/"
+
+    def test_from_kaikki_no_etymology(self) -> None:
+        """Test parsing entry without etymology."""
+        raw = {"word": "test", "pos": "noun", "senses": []}
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.etymology is None
+
+    def test_from_kaikki_missing_fields(self) -> None:
+        """Test parsing entry with missing fields."""
+        raw: dict[str, Any] = {}
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.word == ""
+        assert entry.pos == ""
+        assert entry.ipa is None
+        assert entry.etymology is None
+        assert entry.senses == []
+
+
+class TestSpacyToKaikkiMapping:
+    """Tests for SPACY_TO_KAIKKI mapping."""
+
+    def test_common_pos_mapped(self) -> None:
+        """Test that common POS tags are mapped."""
+        assert SPACY_TO_KAIKKI["NOUN"] == ["noun"]
+        assert SPACY_TO_KAIKKI["VERB"] == ["verb"]
+        assert SPACY_TO_KAIKKI["ADJ"] == ["adj"]
+        assert SPACY_TO_KAIKKI["ADV"] == ["adv"]
+
+    def test_adp_maps_to_multiple(self) -> None:
+        """Test that ADP maps to multiple kaikki tags."""
+        assert "prep" in SPACY_TO_KAIKKI["ADP"]
+        assert "postp" in SPACY_TO_KAIKKI["ADP"]
+
+    def test_conj_variants_map_same(self) -> None:
+        """Test that CONJ, CCONJ, SCONJ all map to conj."""
+        assert SPACY_TO_KAIKKI["CONJ"] == ["conj"]
+        assert SPACY_TO_KAIKKI["CCONJ"] == ["conj"]
+        assert SPACY_TO_KAIKKI["SCONJ"] == ["conj"]
 
 
 class TestDictionaryInit:
@@ -165,7 +293,6 @@ class TestDictionaryInit:
         cache_dir = tmp_path / "custom_cache"
         assert not cache_dir.exists()
 
-        # Just init, don't load data
         dictionary = Dictionary("fr", cache_dir=cache_dir)
 
         assert cache_dir.exists()
@@ -189,8 +316,8 @@ class TestDictionaryDownload:
             dictionary = Dictionary("fr", cache_dir=tmp_path)
             result = dictionary.lookup("chien")
 
-            assert result is not None
-            assert result.lemma == "chien"
+            assert len(result) == 1
+            assert result[0].word == "chien"
             mock_stream.assert_called_once()
 
     def test_uses_cache_on_second_access(self, tmp_path: Path) -> None:
@@ -212,7 +339,7 @@ class TestDictionaryDownload:
             dictionary2 = Dictionary("fr", cache_dir=tmp_path)
             result = dictionary2.lookup("chien")
 
-            assert result is not None
+            assert len(result) == 1
             # Should only have downloaded once
             assert mock_stream.call_count == 1
 
@@ -236,75 +363,84 @@ class TestDictionaryLookup:
             dictionary._ensure_loaded()
             return dictionary
 
+    def test_lookup_returns_list(self, dictionary: Dictionary) -> None:
+        """Test lookup returns a list of entries."""
+        result = dictionary.lookup("chien")
+        assert isinstance(result, list)
+        assert len(result) == 1
+
     def test_lookup_known_word(self, dictionary: Dictionary) -> None:
         """Test lookup of a known word."""
         result = dictionary.lookup("chien")
 
-        assert result is not None
-        assert result.lemma == "chien"
-        assert result.language == "fr"
-        assert result.ipa == "/ʃjɛ̃/"
-        assert result.gender == "m"
-        assert result.pos == "noun"
-        assert "dog" in result.translations_en
-        assert "hound" in result.translations_en
+        assert len(result) == 1
+        entry = result[0]
+        assert entry.word == "chien"
+        assert entry.pos == "noun"
+        assert entry.ipa == "/ʃjɛ̃/"
+        assert entry.etymology == "From Latin canis."
+        assert len(entry.senses) == 2
+        assert entry.senses[0].translation == "dog"
+        assert entry.senses[0].example is not None
+        assert entry.senses[0].example.text == "Le chien aboie."
 
     def test_lookup_unknown_word(self, dictionary: Dictionary) -> None:
-        """Test lookup of an unknown word returns None."""
+        """Test lookup of an unknown word returns empty list."""
         result = dictionary.lookup("xyznonexistent")
-        assert result is None
+        assert result == []
 
-    def test_lookup_with_target_language(self, dictionary: Dictionary) -> None:
-        """Test lookup with target language translations."""
-        result = dictionary.lookup("chien", target_language="es")
+    def test_lookup_word_with_multiple_entries(self, dictionary: Dictionary) -> None:
+        """Test lookup of word with multiple kaikki entries."""
+        result = dictionary.lookup("faux")
 
-        assert result is not None
-        assert result.target_language == "es"
-        assert "perro" in result.target_translations
-        assert "can" in result.target_translations
+        # Should have 3 entries (2 nouns, 1 adj)
+        assert len(result) == 3
+        pos_counts = {"noun": 0, "adj": 0}
+        for entry in result:
+            pos_counts[entry.pos] = pos_counts.get(entry.pos, 0) + 1
+        assert pos_counts["noun"] == 2
+        assert pos_counts["adj"] == 1
 
-    def test_lookup_without_target_language(self, dictionary: Dictionary) -> None:
-        """Test lookup without target language has empty target_translations."""
-        result = dictionary.lookup("chien")
+    def test_lookup_with_pos_filter(self, dictionary: Dictionary) -> None:
+        """Test lookup with POS filter."""
+        result = dictionary.lookup("faux", pos=["noun"])
 
-        assert result is not None
-        assert result.target_language is None
-        assert result.target_translations == []
+        assert len(result) == 2
+        for entry in result:
+            assert entry.pos == "noun"
+
+    def test_lookup_with_pos_filter_multiple_pos(self, dictionary: Dictionary) -> None:
+        """Test lookup with multiple POS in filter."""
+        result = dictionary.lookup("faux", pos=["noun", "adj"])
+
+        assert len(result) == 3
+
+    def test_lookup_with_pos_filter_no_match(self, dictionary: Dictionary) -> None:
+        """Test lookup with POS filter that matches nothing."""
+        result = dictionary.lookup("faux", pos=["verb"])
+
+        assert result == []
 
     def test_lookup_verb(self, dictionary: Dictionary) -> None:
         """Test lookup of a verb."""
         result = dictionary.lookup("manger")
 
-        assert result is not None
-        assert result.pos == "verb"
-        assert result.gender is None
-        assert result.ipa == "/mɑ̃.ʒe/"
-        assert "to eat" in result.translations_en
-
-    def test_lookup_adjective(self, dictionary: Dictionary) -> None:
-        """Test lookup of an adjective."""
-        result = dictionary.lookup("beau")
-
-        assert result is not None
-        assert result.pos == "adj"
-        assert result.gender is None
-        assert "beautiful" in result.translations_en
-
-    def test_lookup_feminine_noun(self, dictionary: Dictionary) -> None:
-        """Test lookup of a feminine noun."""
-        result = dictionary.lookup("maison")
-
-        assert result is not None
-        assert result.gender == "f"
-        assert result.pos == "noun"
+        assert len(result) == 1
+        entry = result[0]
+        assert entry.pos == "verb"
+        assert entry.ipa == "/mɑ̃.ʒe/"
+        assert entry.senses[0].translation == "to eat"
+        # Example uses 'english' field fallback
+        assert entry.senses[0].example is not None
+        assert entry.senses[0].example.translation == "I eat an apple."
 
     def test_lookup_word_without_ipa(self, dictionary: Dictionary) -> None:
         """Test lookup of a word without IPA."""
         result = dictionary.lookup("hormis")
 
-        assert result is not None
-        assert result.ipa is None
-        assert result.pos == "prep"
+        assert len(result) == 1
+        assert result[0].ipa is None
+        assert result[0].pos == "prep"
 
 
 class TestDictionaryEdgeCases:
@@ -330,7 +466,7 @@ class TestDictionaryEdgeCases:
             dictionary = Dictionary("fr", cache_dir=tmp_path)
             result = dictionary.lookup("chien")
 
-            assert result is not None
+            assert len(result) == 1
 
     def test_malformed_json_line_skipped(self, tmp_path: Path) -> None:
         """Test that malformed JSON lines are skipped."""
@@ -353,40 +489,7 @@ class TestDictionaryEdgeCases:
             # Should still work, skipping the bad line
             result = dictionary.lookup("chien")
 
-            assert result is not None
-
-    def test_multiple_pos_entries(self, tmp_path: Path) -> None:
-        """Test handling of words with multiple parts of speech."""
-        entries = [
-            {
-                "word": "test",
-                "pos": "adv",
-                "senses": [{"glosses": ["as adverb"]}],
-            },
-            {
-                "word": "test",
-                "pos": "noun",
-                "senses": [{"glosses": ["as noun"]}],
-            },
-        ]
-        jsonl_content = create_sample_jsonl(entries)
-
-        mock_response = MagicMock()
-        mock_response.headers = {"content-length": str(len(jsonl_content))}
-        mock_response.iter_bytes = lambda chunk_size: [jsonl_content.encode()]
-
-        with patch("httpx.stream") as mock_stream:
-            mock_stream.return_value.__enter__.return_value = mock_response
-
-            dictionary = Dictionary("fr", cache_dir=tmp_path)
-            result = dictionary.lookup("test")
-
-            assert result is not None
-            # Should prefer noun over adv based on priority
-            assert result.pos == "noun"
-            # Should have both glosses
-            assert "as noun" in result.translations_en
-            assert "as adverb" in result.translations_en
+            assert len(result) == 1
 
     def test_language_property(self, tmp_path: Path) -> None:
         """Test the language property."""
@@ -403,3 +506,57 @@ class TestKaikkiUrls:
             assert url.startswith("https://kaikki.org/dictionary/")
             assert url.endswith(".jsonl")
             assert lang in Dictionary.supported_languages()
+
+
+class TestDictionaryIndexInvalidation:
+    """Tests for index cache invalidation."""
+
+    def test_rebuilds_index_when_older_than_cache(self, tmp_path: Path) -> None:
+        """Test that stale index is rebuilt when cache is newer."""
+        jsonl_content = create_sample_jsonl(SAMPLE_ENTRIES)
+
+        mock_response = MagicMock()
+        mock_response.headers = {"content-length": str(len(jsonl_content))}
+        mock_response.iter_bytes = lambda chunk_size: [jsonl_content.encode()]
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__.return_value = mock_response
+
+            # First access - creates cache and index
+            dict1 = Dictionary("fr", cache_dir=tmp_path)
+            dict1._ensure_loaded()
+
+            # Make cache newer than index
+            cache_path = tmp_path / "kaikki-fr.jsonl"
+            cache_path.touch()
+
+            # Second instance should rebuild index
+            dict2 = Dictionary("fr", cache_dir=tmp_path)
+            dict2._ensure_loaded()
+
+            assert dict2.lookup("chien")
+
+    def test_rebuilds_index_when_corrupted(self, tmp_path: Path) -> None:
+        """Test that corrupted index triggers rebuild."""
+        jsonl_content = create_sample_jsonl(SAMPLE_ENTRIES)
+
+        mock_response = MagicMock()
+        mock_response.headers = {"content-length": str(len(jsonl_content))}
+        mock_response.iter_bytes = lambda chunk_size: [jsonl_content.encode()]
+
+        with patch("httpx.stream") as mock_stream:
+            mock_stream.return_value.__enter__.return_value = mock_response
+
+            # First access - creates cache and index
+            dict1 = Dictionary("fr", cache_dir=tmp_path)
+            dict1._ensure_loaded()
+
+            # Corrupt the index
+            index_path = tmp_path / "kaikki-fr-index.json"
+            index_path.write_text("not valid json {{{")
+
+            # Second instance should rebuild
+            dict2 = Dictionary("fr", cache_dir=tmp_path)
+            dict2._ensure_loaded()
+
+            assert dict2.lookup("chien")

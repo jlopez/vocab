@@ -2,669 +2,750 @@
 
 ## Overview
 
-Build a pipeline to generate Anki flashcards from extracted vocabulary for language learning. The cards are designed for active recall training: the front shows a meaning in the target language (e.g., Spanish), and the back shows the source language word (e.g., French) with IPA pronunciation, gender (for nouns), example sentences, and variant forms.
+Build a pipeline to generate Anki flashcards from extracted vocabulary. The pipeline enriches vocabulary entries with Wiktionary data, disambiguates word senses using an LLM, and exports to Anki's `.apkg` format.
 
-The pipeline is language-agnostic, supporting any source/target language pair available in Wiktionary.
+The pipeline processes vocabulary in three stages:
+1. **Enrichment**: Match lemmas to dictionary entries by (word, POS)
+2. **Disambiguation**: Assign each example sentence to a specific word sense
+3. **Export**: Generate Anki cards from sense assignments
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  L0: Vocabulary │     │  L1: Dictionary │     │  L2: Translation│     │   L3: Anki      │
-│    Filtering    │────▶│     Lookup      │────▶│   Refinement    │────▶│    Export       │
-└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
-   frequency cutoffs      Wiktionary data          LLM (configurable)     genanki
-   proper noun removal    IPA, gender, POS         meaning grouping        .apkg output
-                          translations              concise translations
+┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│  generate_enriched  │     │  disambiguate       │     │  AnkiDeckBuilder    │
+│  _lemmas()          │────▶│  _senses()          │────▶│  .add()             │
+└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+   Vocabulary + Dict           LLM (when needed)           genanki
+   → EnrichedLemma             → SenseAssignment           → .apkg
 ```
 
-### Layer 0: Vocabulary Filtering
-- **Input**: Vocabulary object (from JSON or in-memory)
-- **Output**: Filtered list of LemmaEntry
-- **Responsibility**: Apply frequency thresholds, remove proper nouns
+### Stage 1: Enrichment
 
-### Layer 1: Dictionary Lookup
-- **Input**: Lemma, source language, target language
-- **Output**: DictionaryEntry (IPA, gender, POS, translations)
-- **Dependencies**: kaikki.org Wiktionary dump (auto-downloaded)
-- **Responsibility**: Provide pronunciation and raw translation data
+- **Input**: `Vocabulary`, `Dictionary`
+- **Output**: `Iterator[EnrichedLemma]`
+- **Responsibility**: Look up each lemma in the dictionary by (word, POS), yield only those with matches
 
-### Layer 2: Translation Refinement
-- **Input**: Lemma, DictionaryEntry, example sentences, source/target languages
-- **Output**: RefinedTranslation with meanings grouped by semantic usage
-- **Dependencies**: Anthropic API (configurable model)
-- **Responsibility**: Group examples by meaning, provide concise translations
+### Stage 2: Disambiguation
 
-### Layer 3: Anki Export
-- **Input**: List of CardData
-- **Output**: .apkg file
-- **Dependencies**: genanki
-- **Responsibility**: Generate Anki deck with styled cards
+- **Input**: `EnrichedLemma`
+- **Output**: `list[SenseAssignment]`
+- **Responsibility**: Assign each example to a specific (word, sense) pair
+
+Two paths:
+- **Trivial**: Single word with single sense → direct assignment, no LLM
+- **LLM**: Multiple words or senses → use LLM to disambiguate
+
+### Stage 3: Export
+
+- **Input**: `SenseAssignment` (streamed via `.add()`)
+- **Output**: `.apkg` file
+- **Responsibility**: Build styled Anki cards, write deck on context exit
 
 ## Data Models
 
 ```python
-# Existing (models.py) - add from_dict()
+# === Dictionary Models (dictionary.py) ===
+
 @dataclass
-class Vocabulary:
-    entries: dict[str, LemmaEntry]
-    language: str
+class DictionaryExample:
+    """Example sentence from Wiktionary."""
+    text: str  # Example in source language (e.g., French)
+    translation: str  # English translation
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "Vocabulary": ...
+@dataclass
+class DictionarySense:
+    """A single sense of a dictionary entry."""
+    id: str  # Wiktionary sense ID
+    translation: str  # English gloss (from .glosses[0])
+    example: DictionaryExample | None  # From .examples[0] if available
 
-# New (dictionary.py)
 @dataclass
 class DictionaryEntry:
-    """Dictionary entry with pronunciation and translations."""
-    lemma: str
-    language: str  # Source language code, e.g., "fr"
-    ipa: str | None
-    gender: str | None  # "m", "f", or None
-    pos: str | None  # "noun", "verb", "adj", etc.
-    translations_en: list[str]  # Always present (from Wiktionary glosses)
-    target_language: str | None  # e.g., "es", None if not requested
-    target_translations: list[str]  # Translations in target language
+    """A dictionary entry from kaikki (one per etymology)."""
+    word: str  # The headword (from .word)
+    pos: str  # Part of speech (kaikki format: "noun", "verb", etc.)
+    ipa: str | None  # From first .sounds[].ipa
+    etymology: str | None  # From .etymology_text
+    senses: list[DictionarySense]  # From .senses[]
 
-# New (translation.py)
-@dataclass
-class TranslationMeaning:
-    """A single meaning of a word with its translation and examples."""
-    translation: str  # Single word/short phrase in target language
-    examples: list[str]  # Example sentences using this meaning
+
+# === Pipeline Models (pipeline.py) ===
 
 @dataclass
-class RefinedTranslation:
-    """Result of LLM translation refinement."""
-    lemma: str
-    source_language: str
-    target_language: str
-    meanings: list[TranslationMeaning]
+class EnrichedLemma:
+    """A lemma enriched with dictionary data."""
+    lemma: LemmaEntry  # From Vocabulary
+    words: list[DictionaryEntry]  # Invariant: len >= 1
 
-# New (anki.py)
 @dataclass
-class CardData:
-    """Data for a single Anki flashcard."""
-    front: str  # Target language meaning (e.g., Spanish)
-    back_word: str  # Source word (with article if noun)
-    back_ipa: str | None  # IPA pronunciation
-    back_examples: list[str]  # Example sentences for this meaning
-    back_forms: list[str]  # Variant forms seen
-    tags: list[str]  # e.g., ["noun", "freq:50-100"]
+class SenseAssignment:
+    """A sense assignment mapping examples to a specific dictionary sense."""
+    lemma: LemmaEntry  # Reference to EnrichedLemma.lemma
+    examples: list[int]  # Indices into lemma.examples[]
+    word: DictionaryEntry  # Reference to one of EnrichedLemma.words
+    sense: int  # Index into word.senses[]
+```
+
+## POS Mapping
+
+spaCy uses Universal POS tags; kaikki uses lowercase names. Mapping (1-to-many):
+
+```python
+SPACY_TO_KAIKKI: dict[str, list[str]] = {
+    "NOUN": ["noun"],
+    "VERB": ["verb"],
+    "ADJ": ["adj"],
+    "ADV": ["adv"],
+    "PROPN": ["name"],
+    "INTJ": ["intj"],
+    "ADP": ["prep", "prep_phrase", "postp"],
+    "PRON": ["pron"],
+    "DET": ["det", "article"],
+    "CONJ": ["conj"],
+    "CCONJ": ["conj"],
+    "SCONJ": ["conj"],
+    "NUM": ["num"],
+    "PART": ["particle"],
+    "PUNCT": ["punct"],
+    "SYM": ["symbol"],
+    "X": ["phrase", "proverb", "contraction", "character"],
+}
 ```
 
 ## Card Format
 
 **Front (question):**
 ```
-perro
+forgery, fabrication
 ```
 
 **Back (answer):**
 ```
-le chien
-/ʃjɛ̃/
+le faux
+/fo/
 
-« Il a adopté un chien errant. »
-« Le chien aboyait sans cesse. »
+« Ce tableau est un *faux* vendu comme une œuvre originale. »
 
-Forms: chien, chiens
+Forms: faux
 ```
-
-Styling:
-- Article in bold for nouns
-- IPA in a distinct font/color
-- Example sentences in italics with guillemets
-- Forms in smaller text
 
 ## Dependencies
 
-**New packages to add:**
+**New packages:**
 - `genanki` - Anki deck generation
 - `anthropic` - LLM API calls
-- `httpx` - Dictionary download (async-capable)
-- `pycountry` - Language code to name mapping
 
-**External data (auto-downloaded):**
-- kaikki.org Wiktionary dumps (~200-300MB per language, cached at `~/.cache/vocab/`)
+**Existing packages (already added):**
+- `httpx` - Dictionary download
 
 ---
 
-## Phase 1: Vocabulary Filtering (L0)
+## Phase 1: Dictionary Restructuring
+
+### Goal
+
+Restructure `Dictionary` to support POS-filtered lookups and return the new `DictionaryEntry` model with senses.
 
 ### Deliverables
-- `Vocabulary.from_dict()` class method in `models.py`
-- `src/vocab/filtering.py` with `filter_vocabulary()` function
-- Unit tests
-- Harness script `data/phaseB-1.py`
 
-### Implementation Details
-
-```python
-# src/vocab/models.py - add to Vocabulary class
-@classmethod
-def from_dict(cls, data: dict[str, Any]) -> "Vocabulary":
-    """Load vocabulary from a JSON-serializable dictionary.
-
-    Args:
-        data: Dictionary with 'language' and 'entries' keys,
-              as produced by to_dict().
-
-    Returns:
-        Vocabulary instance.
-    """
-
-# src/vocab/filtering.py
-def filter_vocabulary(
-    vocab: Vocabulary,
-    *,
-    min_freq: int = 1,
-    max_freq: int | None = None,
-    exclude_proper_nouns: bool = True,
-) -> list[LemmaEntry]:
-    """Filter vocabulary entries based on frequency and type.
-
-    Args:
-        vocab: Vocabulary to filter.
-        min_freq: Minimum frequency (inclusive). Default 1.
-        max_freq: Maximum frequency (inclusive). None for no limit.
-        exclude_proper_nouns: If True, exclude lemmas that appear to be
-            proper nouns (start with uppercase letter).
-
-    Returns:
-        List of LemmaEntry objects matching the criteria,
-        sorted by frequency descending.
-    """
-```
-
-**Proper noun detection:**
-- Lemma starts with uppercase letter
-- Simple heuristic; may have false positives (sentence-initial words that got lemmatized with capital)
-- Good enough for filtering; user can review
-
-### Files to Create
-- `src/vocab/filtering.py`
-- `tests/test_filtering.py`
-- `data/phaseB-1.py` (not checked in)
-
-### Files to Modify
-- `src/vocab/models.py` (add `from_dict`)
-- `src/vocab/__init__.py` (exports)
-
-### Harness Script (data/phaseB-1.py)
-```python
-# Load vocabulary from JSON, apply filters, print statistics
-import json
-from vocab import Vocabulary, filter_vocabulary
-
-with open("phase4-lg.json") as f:
-    vocab = Vocabulary.from_dict(json.load(f))
-
-print(f"Total lemmas: {len(vocab.entries)}")
-
-filtered = filter_vocabulary(vocab, min_freq=2, max_freq=500, exclude_proper_nouns=True)
-print(f"After filtering: {len(filtered)}")
-
-# Show sample
-for entry in filtered[:20]:
-    print(f"  {entry.lemma}: {entry.frequency}")
-```
-
-### Acceptance Criteria
-- [x] `Vocabulary.from_dict()` correctly reconstructs Vocabulary from `to_dict()` output
-- [x] `filter_vocabulary()` filters by min/max frequency
-- [x] `filter_vocabulary()` excludes proper nouns when enabled
-- [x] Results sorted by frequency descending
-- [x] `uv run ruff check .` passes
-- [x] `uv run mypy .` passes
-- [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
-
-**Phase 1 completed.**
-
----
-
-## Phase 2: Dictionary Layer (L1)
-
-### Deliverables
-- `src/vocab/dictionary.py` with `Dictionary` class
-- Auto-download and caching of Wiktionary data
-- Unit tests
-- Harness script `data/phaseB-2.py`
+- Restructured `DictionaryEntry`, new `DictionarySense`, `DictionaryExample` dataclasses
+- `Dictionary.lookup()` returns `list[DictionaryEntry]` filtered by POS
+- POS mapping constant `SPACY_TO_KAIKKI`
+- Updated tests
 
 ### Implementation Details
 
 ```python
 # src/vocab/dictionary.py
-@dataclass
-class DictionaryEntry:
-    """Dictionary entry with pronunciation and translations.
 
-    Attributes:
-        lemma: The word being looked up.
-        language: Source language code (e.g., "fr").
-        ipa: IPA pronunciation, if available.
-        gender: Grammatical gender ("m" or "f") for nouns, None otherwise.
-        pos: Part of speech (noun, verb, adj, adv, etc.).
-        translations_en: English translations (from Wiktionary glosses).
-        target_language: Target language code if translations requested, else None.
-        target_translations: Translations in target language.
-    """
-    lemma: str
-    language: str
-    ipa: str | None
-    gender: str | None
-    pos: str | None
-    translations_en: list[str]
-    target_language: str | None
-    target_translations: list[str]
-
-
-# Mapping of language codes to kaikki.org URLs
-KAIKKI_URLS = {
-    "fr": "https://kaikki.org/dictionary/French/kaikki.org-dictionary-French.jsonl",
-    "de": "https://kaikki.org/dictionary/German/kaikki.org-dictionary-German.jsonl",
-    "es": "https://kaikki.org/dictionary/Spanish/kaikki.org-dictionary-Spanish.jsonl",
-    "it": "https://kaikki.org/dictionary/Italian/kaikki.org-dictionary-Italian.jsonl",
-    "pt": "https://kaikki.org/dictionary/Portuguese/kaikki.org-dictionary-Portuguese.jsonl",
+SPACY_TO_KAIKKI: dict[str, list[str]] = {
+    "NOUN": ["noun"],
+    "VERB": ["verb"],
+    "ADJ": ["adj"],
+    "ADV": ["adv"],
+    "PROPN": ["name"],
+    "INTJ": ["intj"],
+    "ADP": ["prep", "prep_phrase", "postp"],
+    "PRON": ["pron"],
+    "DET": ["det", "article"],
+    "CONJ": ["conj"],
+    "CCONJ": ["conj"],
+    "SCONJ": ["conj"],
+    "NUM": ["num"],
+    "PART": ["particle"],
+    "PUNCT": ["punct"],
+    "SYM": ["symbol"],
+    "X": ["phrase", "proverb", "contraction", "character"],
 }
 
 
-class Dictionary:
-    """Dictionary backed by Wiktionary data.
-
-    Data is automatically downloaded from kaikki.org on first use
-    and cached locally.
-    """
-
-    def __init__(self, language: str, cache_dir: Path | None = None):
-        """Initialize the dictionary for a language.
-
-        Args:
-            language: Language code (e.g., "fr", "de", "es").
-            cache_dir: Directory for cached data. Defaults to ~/.cache/vocab/
-
-        Raises:
-            ValueError: If language is not supported.
-        """
+@dataclass
+class DictionaryExample:
+    """Example sentence from Wiktionary."""
+    text: str
+    translation: str
 
     @classmethod
-    def supported_languages(cls) -> list[str]:
-        """Return list of supported language codes."""
-        return list(KAIKKI_URLS.keys())
+    def from_kaikki(cls, raw: dict[str, Any]) -> "DictionaryExample":
+        """Parse a kaikki example object."""
+        return cls(
+            text=raw.get("text", ""),
+            translation=raw.get("translation") or raw.get("english", ""),
+        )
 
-    def lookup(
-        self,
-        lemma: str,
-        target_language: str | None = None,
-    ) -> DictionaryEntry | None:
-        """Look up a word.
+
+@dataclass
+class DictionarySense:
+    """A single sense of a dictionary entry."""
+    id: str
+    translation: str
+    example: DictionaryExample | None
+
+    @classmethod
+    def from_kaikki(cls, raw: dict[str, Any]) -> "DictionarySense":
+        """Parse a kaikki sense object."""
+        examples = raw.get("examples", [])
+        example = DictionaryExample.from_kaikki(examples[0]) if examples else None
+
+        glosses = raw.get("glosses", [])
+        translation = glosses[0] if glosses else ""
+
+        return cls(
+            id=raw.get("id", ""),
+            translation=translation,
+            example=example,
+        )
+
+
+@dataclass
+class DictionaryEntry:
+    """A dictionary entry from kaikki (one per etymology)."""
+    word: str
+    pos: str
+    ipa: str | None
+    etymology: str | None
+    senses: list[DictionarySense]
+
+    @classmethod
+    def from_kaikki(cls, raw: dict[str, Any]) -> "DictionaryEntry":
+        """Parse a kaikki dictionary entry."""
+        return cls(
+            word=raw.get("word", ""),
+            pos=raw.get("pos", ""),
+            ipa=cls._extract_ipa(raw),
+            etymology=raw.get("etymology_text"),
+            senses=[DictionarySense.from_kaikki(s) for s in raw.get("senses", [])],
+        )
+
+    @staticmethod
+    def _extract_ipa(raw: dict[str, Any]) -> str | None:
+        """Extract first available IPA pronunciation."""
+        for sound in raw.get("sounds", []):
+            if ipa := sound.get("ipa"):
+                return ipa
+        return None
+
+
+class Dictionary:
+    def lookup(self, word: str, pos: list[str] | None = None) -> list[DictionaryEntry]:
+        """Look up a word, optionally filtering by POS.
 
         Args:
-            lemma: Word to look up.
-            target_language: Optional target language for translations (e.g., "es").
-                If provided, target_translations will be populated.
+            word: Word to look up.
+            pos: List of kaikki POS tags to filter by (e.g., ["noun", "name"]).
+                 If None, returns all entries for the word.
 
         Returns:
-            DictionaryEntry if found, None otherwise.
+            List of DictionaryEntry objects, one per kaikki entry matching
+            the word and POS filter. Empty list if no matches.
         """
+        self._ensure_loaded()
+        raw_entries = self._data.get(word, [])
+
+        entries = [DictionaryEntry.from_kaikki(raw) for raw in raw_entries]
+
+        if pos:
+            entries = [e for e in entries if e.pos in pos]
+
+        return entries
 ```
 
-**Data source:**
-- kaikki.org provides Wiktionary extracts as JSONL files
-- Download once per language, parse into in-memory dict keyed by lemma
-- Cache the parsed data for faster subsequent loads
+**Conversion pattern:**
 
-**Parsing strategy:**
-- Each line is a JSON object with word info
-- Extract: `word`, `sounds` (for IPA), `senses` (for translations), `pos`
-- Gender from `tags` or `head_templates` for nouns
-- Target language translations from `senses[].translations` where `lang` matches
-- English translations from `senses[].glosses`
+Each dataclass has a `from_kaikki()` class method that encapsulates parsing logic:
+- `DictionaryExample.from_kaikki()` - parses example, prefers `.translation` over `.english`
+- `DictionarySense.from_kaikki()` - parses sense with id, first gloss, optional example
+- `DictionaryEntry.from_kaikki()` - parses full entry, delegates to nested `from_kaikki()` calls
 
-### Files to Create
-- `src/vocab/dictionary.py`
-- `tests/test_dictionary.py`
+This pattern makes it easy to add fields later (e.g., gender): add field to dataclass, update `from_kaikki()`, add `_extract_*()` helper if complex.
+
+**Testing the conversion:**
+
+```python
+def test_dictionary_entry_from_kaikki():
+    raw = {
+        "word": "chien",
+        "pos": "noun",
+        "sounds": [{"ipa": "/ʃjɛ̃/"}],
+        "etymology_text": "From Latin canis.",
+        "senses": [{"id": "fr-noun-1", "glosses": ["dog"]}],
+    }
+    entry = DictionaryEntry.from_kaikki(raw)
+    assert entry.word == "chien"
+    assert entry.ipa == "/ʃjɛ̃/"
+    assert entry.etymology == "From Latin canis."
+    assert len(entry.senses) == 1
+    assert entry.senses[0].translation == "dog"
+```
 
 ### Files to Modify
-- `src/vocab/__init__.py` (exports)
-- `pyproject.toml` (add httpx dependency)
 
-### Harness Script (data/phaseB-2.py)
-```python
-# Test dictionary lookups and coverage
-import json
-from vocab import Vocabulary, filter_vocabulary
-from vocab.dictionary import Dictionary
-
-# Load filtered vocabulary
-with open("phase4-lg.json") as f:
-    vocab = Vocabulary.from_dict(json.load(f))
-filtered = filter_vocabulary(vocab, min_freq=2, exclude_proper_nouns=True)
-
-# Initialize dictionary (will download on first run)
-dictionary = Dictionary("fr")
-
-# Check coverage
-found = 0
-missing = []
-for entry in filtered[:500]:
-    result = dictionary.lookup(entry.lemma, target_language="es")
-    if result:
-        found += 1
-    else:
-        missing.append(entry.lemma)
-
-print(f"Coverage: {found}/500 ({found/5:.1f}%)")
-print(f"Missing: {missing[:20]}")
-
-# Show sample entries
-for lemma in ["chien", "manger", "beau", "hormis"]:
-    entry = dictionary.lookup(lemma, target_language="es")
-    if entry:
-        print(f"\n{lemma}:")
-        print(f"  IPA: {entry.ipa}")
-        print(f"  Gender: {entry.gender}")
-        print(f"  EN: {entry.translations_en[:3]}")
-        print(f"  ES: {entry.target_translations[:3]}")
-```
+- `src/vocab/dictionary.py` - restructure models and lookup
+- `tests/test_dictionary.py` - update for new API
 
 ### Acceptance Criteria
-- [x] Dictionary auto-downloads on first use
-- [x] Downloaded data cached at `~/.cache/vocab/`
-- [x] Supports multiple source languages (fr, de, es, it, pt)
-- [x] `lookup()` returns `DictionaryEntry` for known words
-- [x] `lookup()` returns `None` for unknown words
-- [x] `lookup()` populates target_translations when target_language provided
-- [x] IPA correctly extracted from Wiktionary data
-- [x] Gender correctly extracted for nouns
-- [x] English translations always extracted
+
+- [x] `DictionaryEntry` has `word`, `pos`, `ipa`, `etymology`, `senses` fields
+- [x] `DictionarySense` has `id`, `translation`, `example` fields
+- [x] `DictionaryExample` has `text`, `translation` fields
+- [x] Each dataclass has `from_kaikki()` class method for parsing
+- [x] `DictionaryEntry._extract_ipa()` extracts first available IPA
+- [x] `lookup()` returns `list[DictionaryEntry]`
+- [x] `lookup(word, pos=["noun"])` filters by POS
+- [x] `lookup(word)` (no POS) returns all entries for word
+- [x] `SPACY_TO_KAIKKI` mapping is exported
+- [x] Unit tests cover `from_kaikki()` parsing with realistic kaikki structures
 - [x] `uv run ruff check .` passes
 - [x] `uv run mypy .` passes
 - [x] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
-**Phase 2 completed.**
-
 ---
 
-## Phase 3: Translation Refinement (L2)
+## Phase 2: Enrichment Stage
+
+### Goal
+
+Implement `generate_enriched_lemmas()` to produce `EnrichedLemma` objects from a `Vocabulary`.
 
 ### Deliverables
-- `src/vocab/translation.py` with `refine_translation()` async function
-- `TranslationMeaning` and `RefinedTranslation` dataclasses
-- Unit tests (with mocked LLM responses)
-- Harness script `data/phaseB-3.py`
+
+- `src/vocab/pipeline.py` with `EnrichedLemma` dataclass and `generate_enriched_lemmas()`
+- Unit tests
+- Harness script `data/phase-2.py`
 
 ### Implementation Details
 
 ```python
-# src/vocab/translation.py
-import pycountry
+# src/vocab/pipeline.py
 
 @dataclass
-class TranslationMeaning:
-    """A single meaning of a word with its translation and examples."""
-    translation: str  # Single word/short phrase in target language
-    examples: list[str]  # Example sentences using this meaning
+class EnrichedLemma:
+    """A lemma enriched with dictionary data."""
+    lemma: LemmaEntry
+    words: list[DictionaryEntry]  # Invariant: len >= 1
 
 
-@dataclass
-class RefinedTranslation:
-    """Result of LLM translation refinement."""
-    lemma: str
-    source_language: str
-    target_language: str
-    meanings: list[TranslationMeaning]
+def generate_enriched_lemmas(
+    vocabulary: Vocabulary,
+    dictionary: Dictionary,
+) -> Iterator[EnrichedLemma]:
+    """Generate enriched lemmas from vocabulary.
 
-
-def get_language_name(code: str) -> str:
-    """Convert language code to full name.
+    For each LemmaEntry in the vocabulary, looks up matching dictionary
+    entries by (word, POS). Only yields entries with at least one match.
 
     Args:
-        code: ISO 639-1 language code (e.g., "fr").
+        vocabulary: Vocabulary to process.
+        dictionary: Dictionary for lookups.
 
-    Returns:
-        Full language name (e.g., "French").
-
-    Raises:
-        ValueError: If language code is not recognized.
+    Yields:
+        EnrichedLemma for each lemma with dictionary matches.
     """
-    lang = pycountry.languages.get(alpha_2=code)
-    if lang is None:
-        raise ValueError(f"Unknown language code: {code}")
-    return lang.name
-
-
-async def refine_translation(
-    lemma: str,
-    dict_entry: DictionaryEntry | None,
-    examples: list[str],
-    *,
-    source_language: str,
-    target_language: str,
-    model: str = "claude-haiku",
-) -> RefinedTranslation:
-    """Refine translations using an LLM, grouping examples by meaning.
-
-    Given a lemma with dictionary data and example sentences, groups the
-    examples by semantic meaning and provides a concise translation for each.
-
-    Args:
-        lemma: The word to translate.
-        dict_entry: Dictionary entry with raw translations, or None if not found.
-        examples: List of example sentences from the source text.
-        source_language: Source language code (e.g., "fr").
-        target_language: Target language code (e.g., "es").
-        model: Model identifier (e.g., "claude-haiku", "claude-sonnet").
-
-    Returns:
-        RefinedTranslation with meanings grouped by semantic usage.
-
-    Raises:
-        ValueError: If dict_entry is provided but doesn't match lemma/language.
-    """
-    # Validate dict_entry if provided
-    if dict_entry is not None:
-        if dict_entry.lemma != lemma:
-            raise ValueError(
-                f"dict_entry.lemma ({dict_entry.lemma}) != lemma ({lemma})"
-            )
-        if dict_entry.language != source_language:
-            raise ValueError(
-                f"dict_entry.language ({dict_entry.language}) != "
-                f"source_language ({source_language})"
-            )
+    for lemma_by_pos in vocabulary.entries.values():
+        for lemma_entry in lemma_by_pos.values():
+            kaikki_pos = SPACY_TO_KAIKKI.get(lemma_entry.pos, [])
+            words = dictionary.lookup(lemma_entry.lemma, pos=kaikki_pos or None)
+            if words:
+                yield EnrichedLemma(lemma=lemma_entry, words=words)
 ```
-
-**Prompt strategy:**
-```
-You are helping create {target_language_name}-to-{source_language_name} flashcards
-for a {target_language_name} speaker learning {source_language_name}.
-
-{source_language_name} word: {lemma}
-Dictionary translations ({target_language_name}): {target_translations}
-Dictionary translations (English): {translations_en}
-
-Example sentences from the source text:
-1. {example_1}
-2. {example_2}
-...
-
-Group these examples by meaning. For each distinct meaning used in the examples:
-1. Provide the single best {target_language_name} translation (1 word if possible, 2-3 max)
-2. List which example numbers use that meaning
-
-If all examples use the same meaning, return a single group.
-
-Output JSON:
-{
-  "meanings": [
-    {"translation": "...", "example_indices": [1, 2]},
-    {"translation": "...", "example_indices": [3]}
-  ]
-}
-```
-
-**Model mapping:**
-- `claude-haiku` → `claude-3-5-haiku-latest`
-- `claude-sonnet` → `claude-sonnet-4-20250514`
-- Allow full model IDs as well
 
 ### Files to Create
-- `src/vocab/translation.py`
-- `tests/test_translation.py`
+
+- `src/vocab/pipeline.py`
+- `tests/test_pipeline.py`
 
 ### Files to Modify
+
 - `src/vocab/__init__.py` (exports)
-- `pyproject.toml` (add anthropic, pycountry dependencies)
 
-### Harness Script (data/phaseB-3.py)
+### Harness Script (data/phase-2.py)
+
 ```python
-# Test translation refinement on sample words with async parallelization
-import asyncio
+#!/usr/bin/env python3
+"""Test enrichment stage."""
 import json
-from vocab import Vocabulary, filter_vocabulary
+from vocab import Vocabulary
 from vocab.dictionary import Dictionary
-from vocab.translation import refine_translation
+from vocab.pipeline import generate_enriched_lemmas
 
-CONCURRENCY = 16
+with open("phase4-lg.json") as f:
+    vocab = Vocabulary.from_dict(json.load(f))
 
-async def main():
-    with open("phase4-lg.json") as f:
-        vocab = Vocabulary.from_dict(json.load(f))
-    filtered = filter_vocabulary(vocab, min_freq=5, exclude_proper_nouns=True)
+dictionary = Dictionary("fr")
 
-    dictionary = Dictionary("fr")
-    semaphore = asyncio.Semaphore(CONCURRENCY)
+# Count statistics
+total = 0
+matched = 0
+multi_word = 0
+multi_sense = 0
 
-    async def process_one(entry):
-        async with semaphore:
-            dict_entry = dictionary.lookup(entry.lemma, target_language="es")
-            examples = [ex.sentence for ex in entry.examples]
+for enriched in generate_enriched_lemmas(vocab, dictionary):
+    total += 1
+    matched += 1
+    if len(enriched.words) > 1:
+        multi_word += 1
+    if any(len(w.senses) > 1 for w in enriched.words):
+        multi_sense += 1
 
-            result = await refine_translation(
-                entry.lemma,
-                dict_entry,
-                examples,
-                source_language="fr",
-                target_language="es",
-                model="claude-haiku",
-            )
-            return result
+print(f"Vocabulary entries: {sum(len(v) for v in vocab.entries.values())}")
+print(f"Enriched lemmas: {matched}")
+print(f"Multiple dictionary entries: {multi_word}")
+print(f"Multiple senses: {multi_sense}")
 
-    # Process sample
-    tasks = [process_one(entry) for entry in filtered[100:120]]
-    results = await asyncio.gather(*tasks)
-
-    for result in results:
-        print(f"\n{result.lemma}:")
-        for meaning in result.meanings:
-            print(f"  {meaning.translation}")
-            for ex in meaning.examples[:2]:
-                print(f"    - {ex[:60]}...")
-
-asyncio.run(main())
+# Show sample
+for i, enriched in enumerate(generate_enriched_lemmas(vocab, dictionary)):
+    if i >= 5:
+        break
+    print(f"\n{enriched.lemma.lemma} ({enriched.lemma.pos}):")
+    for w in enriched.words:
+        print(f"  {w.word} [{w.pos}] - {len(w.senses)} senses")
+        for s in w.senses[:2]:
+            print(f"    - {s.translation[:50]}")
 ```
 
 ### Acceptance Criteria
-- [ ] `refine_translation()` is async
-- [ ] Returns `RefinedTranslation` with grouped meanings
-- [ ] Groups examples by semantic meaning
-- [ ] Each meaning has concise translation (1-3 words)
-- [ ] Validates dict_entry matches lemma and source_language
-- [ ] Works with dict_entry=None (uses LLM knowledge only)
-- [ ] Model parameter correctly maps to Anthropic model IDs
-- [ ] Handles API errors gracefully
-- [ ] Unit tests use mocked responses (no real API calls in CI)
+
+- [ ] `EnrichedLemma` dataclass with `lemma` and `words` fields
+- [ ] `generate_enriched_lemmas()` yields only lemmas with dictionary matches
+- [ ] POS mapping correctly converts spaCy → kaikki
+- [ ] Lemmas with no dictionary match are skipped (not yielded)
 - [ ] `uv run ruff check .` passes
 - [ ] `uv run mypy .` passes
 - [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
 
 ---
 
-## Phase 4: Anki Export + CLI (L3)
+## Phase 3: Disambiguation Stage
+
+### Goal
+
+Implement sense disambiguation with trivial path and LLM path.
 
 ### Deliverables
-- `src/vocab/anki.py` with `generate_deck()` function
-- `src/vocab/cli.py` with command-line interface
+
+- `SenseAssignment` dataclass
+- `needs_disambiguation()`, `assign_single_sense()`, `disambiguate_senses()`
+- Unit tests (mocked LLM)
+- Harness script `data/phase-3.py`
+
+### Implementation Details
+
+```python
+# src/vocab/pipeline.py (additions)
+
+@dataclass
+class SenseAssignment:
+    """A sense assignment mapping examples to a specific dictionary sense."""
+    lemma: LemmaEntry
+    examples: list[int]  # Indices into lemma.examples[]
+    word: DictionaryEntry
+    sense: int  # Index into word.senses[]
+
+
+def needs_disambiguation(entry: EnrichedLemma) -> bool:
+    """Return True if LLM disambiguation is needed.
+
+    Disambiguation is needed when there are multiple words or
+    any word has multiple senses.
+    """
+    if len(entry.words) > 1:
+        return True
+    return len(entry.words[0].senses) > 1
+
+
+def assign_single_sense(entry: EnrichedLemma) -> SenseAssignment:
+    """Assign all examples to the single available sense.
+
+    Args:
+        entry: EnrichedLemma with exactly one word and one sense.
+
+    Returns:
+        SenseAssignment with all example indices.
+
+    Raises:
+        AssertionError: If entry has multiple words or senses.
+    """
+    assert not needs_disambiguation(entry), "Use disambiguate_senses() for this entry"
+    return SenseAssignment(
+        lemma=entry.lemma,
+        examples=list(range(len(entry.lemma.examples))),
+        word=entry.words[0],
+        sense=0,
+    )
+
+
+async def disambiguate_senses(
+    entry: EnrichedLemma,
+    *,
+    model: str = "claude-haiku",
+) -> list[SenseAssignment]:
+    """Use LLM to assign examples to senses.
+
+    This function's signature is provider-agnostic: domain types in, domain
+    types out. The LLM provider (currently Anthropic) is an implementation
+    detail; switching providers requires only changing this function's internals.
+
+    Args:
+        entry: EnrichedLemma with multiple words or senses.
+        model: Model identifier ("claude-haiku" or "claude-sonnet").
+
+    Returns:
+        List of SenseAssignments, one per unique (word, sense) used.
+        Examples that couldn't be assigned are logged and omitted.
+
+    Raises:
+        AssertionError: If entry has only one sense.
+    """
+    assert needs_disambiguation(entry), "Use assign_single_sense() for this entry"
+    ...
+```
+
+**Response Schema (Pydantic):**
+
+```python
+class SentenceAssignment(BaseModel):
+    """Assignment of a sentence to a sense."""
+    sentence: int  # 1-indexed sentence number
+    sense: int | None  # 1-indexed sense number, None if unknown
+
+class DisambiguationResponse(BaseModel):
+    """LLM response for sense disambiguation."""
+    assignments: list[SentenceAssignment]
+```
+
+**LLM Prompt Template:**
+
+```
+You are helping associate sentences with word meanings.
+
+Language: {language}
+Word: {word}
+
+Available senses:
+{senses}
+
+Sentences from the source text:
+{sentences}
+
+For each sentence, indicate which sense is being used.
+If you cannot confidently determine the sense, use null for the sense.
+```
+
+Template variables:
+- `{language}` - Full language name (e.g., "French")
+- `{word}` - The lemma being disambiguated
+- `{senses}` - Numbered list, one per line: `{i}. [word={word}, etymology={etymology}] {translation}`
+- `{sentences}` - Numbered list, one per line: `{i}. {sentence_text}`
+
+**Rendered Example:**
+
+```
+You are helping associate sentences with word meanings.
+
+Language: French
+Word: faux
+
+Available senses:
+1. [word=faux, etymology=From Latin falsus] forgery, fabrication
+2. [word=faux, etymology=From Latin falx] scythe
+
+Sentences from the source text:
+1. Le paysan affûte sa *faux* avant de couper l'herbe au lever du soleil.
+2. Ce tableau est un *faux* vendu comme une œuvre originale.
+
+For each sentence, indicate which sense is being used.
+If you cannot confidently determine the sense, use null for the sense.
+```
+
+**Model mapping:**
+- `claude-haiku` → `claude-3-5-haiku-latest`
+- `claude-sonnet` → `claude-sonnet-4-20250514`
+
+### Files to Modify
+
+- `src/vocab/pipeline.py` (add disambiguation functions)
+- `tests/test_pipeline.py` (add disambiguation tests)
+- `pyproject.toml` (add anthropic dependency)
+
+### Harness Script (data/phase-3.py)
+
+```python
+#!/usr/bin/env python3
+"""Test disambiguation stage."""
+import asyncio
+import json
+from vocab import Vocabulary
+from vocab.dictionary import Dictionary
+from vocab.pipeline import (
+    generate_enriched_lemmas,
+    needs_disambiguation,
+    assign_single_sense,
+    disambiguate_senses,
+)
+
+PARALLELISM = 16
+
+
+async def main():
+    with open("phase4-lg.json") as f:
+        vocab = Vocabulary.from_dict(json.load(f))
+
+    dictionary = Dictionary("fr")
+
+    trivial_count = 0
+    llm_count = 0
+    assignments: list[SenseAssignment] = []
+
+    llm_batch: list[EnrichedLemma] = []
+
+    for enriched in generate_enriched_lemmas(vocab, dictionary):
+        if not needs_disambiguation(enriched):
+            trivial_count += 1
+            assignments.append(assign_single_sense(enriched))
+        else:
+            llm_count += 1
+            llm_batch.append(enriched)
+
+            if len(llm_batch) >= PARALLELISM:
+                results = await asyncio.gather(
+                    *[disambiguate_senses(e) for e in llm_batch]
+                )
+                for result in results:
+                    assignments.extend(result)
+                llm_batch = []
+
+        # Limit for testing
+        if trivial_count + llm_count >= 100:
+            break
+
+    # Flush remaining
+    if llm_batch:
+        results = await asyncio.gather(*[disambiguate_senses(e) for e in llm_batch])
+        for result in results:
+            assignments.extend(result)
+
+    print(f"Trivial: {trivial_count}")
+    print(f"LLM: {llm_count}")
+    print(f"Total assignments: {len(assignments)}")
+
+    # Show sample
+    for a in assignments[:5]:
+        sense = a.word.senses[a.sense]
+        print(f"\n{a.lemma.lemma}: {sense.translation[:40]}")
+        print(f"  Examples: {a.examples}")
+
+
+asyncio.run(main())
+```
+
+### Acceptance Criteria
+
+- [ ] `SenseAssignment` dataclass with `lemma`, `examples`, `word`, `sense` fields
+- [ ] `needs_disambiguation()` returns True for multi-word or multi-sense entries
+- [ ] `assign_single_sense()` works for trivial cases
+- [ ] `assign_single_sense()` raises AssertionError for non-trivial cases
+- [ ] `disambiguate_senses()` calls LLM and parses response
+- [ ] `disambiguate_senses()` raises AssertionError for trivial cases
+- [ ] Unassignable examples are logged and omitted
+- [ ] Unit tests mock LLM responses
+- [ ] `uv run ruff check .` passes
+- [ ] `uv run mypy .` passes
+- [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
+
+---
+
+## Phase 4: Anki Export
+
+### Goal
+
+Implement `AnkiDeckBuilder` context manager to generate `.apkg` files.
+
+### Deliverables
+
+- `src/vocab/anki.py` with `AnkiDeckBuilder` class
 - Card template with CSS styling
 - Unit tests
-- Harness script `data/phaseB-4.py`
+- Harness script `data/phase-4.py`
 
 ### Implementation Details
 
 ```python
 # src/vocab/anki.py
-@dataclass
-class CardData:
-    """Data for a single Anki flashcard.
 
-    Attributes:
-        front: The question side (target language meaning).
-        back_word: Source word, with article if noun (e.g., "le chien").
-        back_ipa: IPA pronunciation, if available.
-        back_examples: Example sentences for this specific meaning.
-        back_forms: List of variant forms seen in source.
-        tags: Tags for the card (e.g., ["noun", "freq:10-50"]).
-    """
-    front: str
-    back_word: str
-    back_ipa: str | None
-    back_examples: list[str]
-    back_forms: list[str]
-    tags: list[str]
+class AnkiDeckBuilder:
+    """Context manager for building an Anki deck."""
 
+    def __init__(
+        self,
+        path: Path,
+        deck_name: str,
+        source_language: str,
+    ) -> None:
+        """Initialize the deck builder.
 
-def generate_deck(
-    cards: list[CardData],
-    deck_name: str,
-    output_path: Path,
-) -> Path:
-    """Generate an Anki deck from card data.
+        Args:
+            path: Output path for the .apkg file.
+            deck_name: Name for the Anki deck.
+            source_language: Source language code (e.g., "fr").
+        """
+        ...
 
-    Args:
-        cards: List of CardData objects.
-        deck_name: Name for the Anki deck.
-        output_path: Path for the output .apkg file.
+    def add(self, entry: SenseAssignment) -> None:
+        """Add a card for this sense assignment.
 
-    Returns:
-        Path to the generated .apkg file.
-    """
+        Creates a card with:
+        - Front: English translation (from sense)
+        - Back: Word with article (if noun), IPA, examples, forms
 
+        Args:
+            entry: SenseAssignment to create a card from.
+        """
+        ...
 
-# src/vocab/cli.py
-def main() -> None:
-    """CLI entry point for vocab commands."""
+    def __enter__(self) -> "AnkiDeckBuilder":
+        """Enter context."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Write the .apkg file and clean up."""
+        ...
 ```
 
-**CLI interface:**
-```bash
-uv run vocab anki input.json -o deck.apkg \
-    --source-language fr \
-    --target-language es \
-    --deck-name "French Vocabulary" \
-    --min-freq 2 \
-    --max-freq 500 \
-    --model claude-haiku
-```
+**Card template:**
 
-**Arguments:**
-- `input.json`: Vocabulary JSON file (from phase 4 of previous plan)
-- `-o, --output`: Output .apkg path (default: `output.apkg`)
-- `--source-language`: Source language code (default: inferred from vocabulary)
-- `--target-language`: Target language code (required)
-- `--deck-name`: Name for the deck (default: "{Source} Vocabulary")
-- `--min-freq`: Minimum frequency filter (default: 1)
-- `--max-freq`: Maximum frequency filter (default: None)
-- `--model`: LLM model for translation (default: `claude-haiku`)
-- `-j, --parallelization`: Number of concurrent LLM calls (default: 16)
-- `--exclude-proper-nouns / --include-proper-nouns`: Proper noun handling (default: exclude)
-
-**Card template (HTML/CSS):**
+Front:
 ```html
-<!-- Front -->
-<div class="front">{{Front}}</div>
+<div class="front">{{Translation}}</div>
+```
 
-<!-- Back -->
+Back:
+```html
 <div class="back">
   <div class="word">{{Word}}</div>
   <div class="ipa">{{IPA}}</div>
@@ -673,118 +754,122 @@ uv run vocab anki input.json -o deck.apkg \
 </div>
 ```
 
+CSS:
 ```css
-.front { font-size: 24px; text-align: center; }
-.word { font-size: 28px; font-weight: bold; }
-.word .article { color: #666; }
-.ipa { font-family: "Doulos SIL", serif; color: #555; margin: 10px 0; }
-.examples { font-style: italic; margin: 15px 0; }
-.examples .example { margin: 5px 0; }
-.forms { font-size: 14px; color: #888; }
+.front {
+  font-size: 24px;
+  text-align: center;
+}
+.word {
+  font-size: 28px;
+  font-weight: bold;
+  text-align: center;
+}
+.ipa {
+  font-family: "Doulos SIL", "Noto Sans", serif;
+  color: #555;
+  text-align: center;
+  margin: 10px 0;
+}
+.examples {
+  font-style: italic;
+  margin: 15px 0;
+}
+.examples .example {
+  margin: 8px 0;
+}
+.forms {
+  font-size: 14px;
+  color: #888;
+  text-align: center;
+}
 ```
 
-**Note on multiple meanings:**
-When a word has multiple meanings (from `RefinedTranslation.meanings`), each meaning
-becomes a separate card. This ensures each card tests a single meaning with its
-relevant examples.
+**Note on gender:** Punted for now. Can be added later by extracting gender from kaikki data and prepending article to nouns.
 
 ### Files to Create
+
 - `src/vocab/anki.py`
-- `src/vocab/cli.py`
 - `tests/test_anki.py`
-- `tests/test_cli.py`
 
 ### Files to Modify
-- `src/vocab/__init__.py` (exports)
-- `pyproject.toml` (add genanki, add CLI entry point)
-- `README.md` (document CLI usage)
 
-### Harness Script (data/phaseB-4.py)
+- `src/vocab/__init__.py` (exports)
+- `pyproject.toml` (add genanki dependency)
+
+### Harness Script (data/phase-4.py)
+
 ```python
-# Full pipeline test: JSON → filtered → translated → .apkg
+#!/usr/bin/env python3
+"""Test full pipeline with Anki export."""
 import asyncio
 import json
 from pathlib import Path
-from vocab import Vocabulary, filter_vocabulary
+from vocab import Vocabulary
 from vocab.dictionary import Dictionary
-from vocab.translation import refine_translation
-from vocab.anki import CardData, generate_deck
+from vocab.pipeline import (
+    generate_enriched_lemmas,
+    needs_disambiguation,
+    assign_single_sense,
+    disambiguate_senses,
+)
+from vocab.anki import AnkiDeckBuilder
 
-CONCURRENCY = 16
+PARALLELISM = 16
+
 
 async def main():
-    # Load and filter
     with open("phase4-lg.json") as f:
         vocab = Vocabulary.from_dict(json.load(f))
-    filtered = filter_vocabulary(vocab, min_freq=3, max_freq=200, exclude_proper_nouns=True)
-    print(f"Filtered to {len(filtered)} lemmas")
 
-    # Build cards with async translation
     dictionary = Dictionary("fr")
-    semaphore = asyncio.Semaphore(CONCURRENCY)
-    cards = []
 
-    async def process_one(entry):
-        async with semaphore:
-            dict_entry = dictionary.lookup(entry.lemma, target_language="es")
-            examples = [ex.sentence for ex in entry.examples]
+    with AnkiDeckBuilder(
+        path=Path("test-deck.apkg"),
+        deck_name="French Vocabulary",
+        source_language="fr",
+    ) as deck:
+        llm_batch: list = []
 
-            refined = await refine_translation(
-                entry.lemma,
-                dict_entry,
-                examples,
-                source_language="fr",
-                target_language="es",
-                model="claude-haiku",
-            )
-
-            # Build back_word with article for nouns
-            if dict_entry and dict_entry.gender:
-                article = "le" if dict_entry.gender == "m" else "la"
-                back_word = f"{article} {entry.lemma}"
+        for enriched in generate_enriched_lemmas(vocab, dictionary):
+            if not needs_disambiguation(enriched):
+                deck.add(assign_single_sense(enriched))
             else:
-                back_word = entry.lemma
+                llm_batch.append(enriched)
 
-            # Create one card per meaning
-            result_cards = []
-            for meaning in refined.meanings:
-                result_cards.append(CardData(
-                    front=meaning.translation,
-                    back_word=back_word,
-                    back_ipa=dict_entry.ipa if dict_entry else None,
-                    back_examples=meaning.examples,
-                    back_forms=list(entry.forms.keys()),
-                    tags=[],
-                ))
-            return result_cards
+                if len(llm_batch) >= PARALLELISM:
+                    results = await asyncio.gather(
+                        *[disambiguate_senses(e) for e in llm_batch]
+                    )
+                    for assignments in results:
+                        for a in assignments:
+                            deck.add(a)
+                    llm_batch = []
 
-    # Process sample (limit for testing)
-    tasks = [process_one(entry) for entry in filtered[:50]]
-    results = await asyncio.gather(*tasks)
+        # Flush remaining
+        if llm_batch:
+            results = await asyncio.gather(
+                *[disambiguate_senses(e) for e in llm_batch]
+            )
+            for assignments in results:
+                for a in assignments:
+                    deck.add(a)
 
-    for card_list in results:
-        cards.extend(card_list)
+    print(f"Generated: test-deck.apkg")
 
-    print(f"Generated {len(cards)} cards from {len(filtered[:50])} lemmas")
-
-    # Generate deck
-    output = generate_deck(cards, "Test French Deck", Path("test-deck.apkg"))
-    print(f"Generated: {output}")
 
 asyncio.run(main())
 ```
 
 ### Acceptance Criteria
-- [ ] `CardData` correctly holds all card fields
-- [ ] `generate_deck()` produces valid .apkg file
-- [ ] One card per meaning (multi-meaning words produce multiple cards)
-- [ ] Card template renders correctly in Anki
-- [ ] CLI parses all arguments correctly
-- [ ] CLI supports --source-language and --target-language
-- [ ] CLI supports -j/--parallelization for concurrent LLM calls
-- [ ] CLI runs full pipeline: load → filter → translate → export
-- [ ] Progress output during processing
-- [ ] README.md updated with CLI documentation
+
+- [ ] `AnkiDeckBuilder` is a context manager
+- [ ] `.add()` accepts `SenseAssignment` and queues a card
+- [ ] On context exit, writes valid `.apkg` file
+- [ ] Card front shows English translation
+- [ ] Card back shows word, IPA, examples, forms
+- [ ] Examples are formatted with guillemets and word highlighted
+- [ ] CSS styling applied correctly
 - [ ] `uv run ruff check .` passes
 - [ ] `uv run mypy .` passes
 - [ ] `uv run pytest --cov=vocab --cov-fail-under=90` passes
@@ -793,11 +878,10 @@ asyncio.run(main())
 
 ## Future Considerations (Out of Scope)
 
-- **FR → ES cards**: Reverse direction for passive recall; can add by creating second card type
-- **Audio pronunciation**: Embed TTS audio files in .apkg
-- **Batch LLM calls**: Optimize API usage by batching multiple words per call
-- **Interactive review**: TSV export for manual review/editing before final .apkg generation
-- **Multiple source files**: Combine vocabulary from multiple books
-- **Custom card templates**: User-configurable HTML/CSS
-- **Spaced repetition tuning**: Custom intervals, ease factors
-- **GUI/web interface**: Visual tool for card review and editing
+- **Gender/articles**: Extract gender from kaikki, prepend "le/la" to nouns
+- **CLI interface**: Command-line tool for running the full pipeline
+- **Target language translations**: If kaikki adds them, or via separate LLM call
+- **Audio pronunciation**: Embed TTS audio in cards
+- **Progress reporting**: Callbacks or progress bars during processing
+- **Caching**: Cache LLM disambiguation results for reruns
+- **Card deduplication**: Handle same sense appearing from different lemmas
