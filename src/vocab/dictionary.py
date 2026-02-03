@@ -112,6 +112,7 @@ class DictionaryEntry:
         etymology: Etymology text, if available.
         senses: List of word senses with translations and examples.
         word_display: Expanded headword with grammatical info (e.g., "durée f (plural durées)").
+        audio_url: URL to MP3 audio pronunciation, if available.
     """
 
     word: str
@@ -120,6 +121,7 @@ class DictionaryEntry:
     etymology: str | None
     senses: list[DictionarySense]
     word_display: str | None = None
+    audio_url: str | None = None
 
     @classmethod
     def from_kaikki(cls, raw: dict[str, Any]) -> DictionaryEntry:
@@ -131,6 +133,7 @@ class DictionaryEntry:
             etymology=raw.get("etymology_text"),
             senses=[DictionarySense.from_kaikki(s) for s in raw.get("senses", [])],
             word_display=cls._extract_word_display(raw),
+            audio_url=cls._extract_audio_url(raw),
         )
 
     @staticmethod
@@ -154,6 +157,19 @@ class DictionaryEntry:
             if template.get("name") in SUPPORTED_HEAD_TEMPLATES:
                 expansion: str | None = template.get("expansion")
                 return expansion
+        return None
+
+    @staticmethod
+    def _extract_audio_url(raw: dict[str, Any]) -> str | None:
+        """Extract first available MP3 audio URL from sounds.
+
+        Returns the first mp3_url found in the sounds array, or None
+        if no MP3 audio is available.
+        """
+        for sound in raw.get("sounds", []):
+            mp3_url = sound.get("mp3_url")
+            if isinstance(mp3_url, str) and mp3_url:
+                return mp3_url
         return None
 
 

@@ -244,6 +244,7 @@ class TestDictionaryEntry:
         assert entry.etymology is None
         assert entry.senses == []
         assert entry.word_display is None
+        assert entry.audio_url is None
 
     def test_from_kaikki_word_display_with_supported_template(self) -> None:
         """Test extracting word_display from supported head template."""
@@ -298,6 +299,80 @@ class TestDictionaryEntry:
         }
         entry = DictionaryEntry.from_kaikki(raw)
         assert entry.word_display == "correct f"
+
+    def test_from_kaikki_audio_url_with_mp3(self) -> None:
+        """Test extracting audio URL when mp3_url is available."""
+        raw = {
+            "word": "chien",
+            "pos": "noun",
+            "sounds": [
+                {"ipa": "/ʃjɛ̃/"},
+                {
+                    "mp3_url": "https://example.com/chien.mp3",
+                    "ogg_url": "https://example.com/chien.ogg",
+                },
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url == "https://example.com/chien.mp3"
+
+    def test_from_kaikki_audio_url_first_mp3(self) -> None:
+        """Test that first mp3_url is returned when multiple exist."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "sounds": [
+                {"mp3_url": "https://example.com/first.mp3"},
+                {"mp3_url": "https://example.com/second.mp3"},
+            ],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url == "https://example.com/first.mp3"
+
+    def test_from_kaikki_audio_url_only_ipa(self) -> None:
+        """Test that audio_url is None when only IPA is available."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "sounds": [{"ipa": "/tɛst/"}],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url is None
+
+    def test_from_kaikki_audio_url_only_ogg(self) -> None:
+        """Test that audio_url is None when only ogg_url is available."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "sounds": [{"ogg_url": "https://example.com/test.ogg"}],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url is None
+
+    def test_from_kaikki_audio_url_empty_sounds(self) -> None:
+        """Test that audio_url is None when sounds array is empty."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "sounds": [],
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url is None
+
+    def test_from_kaikki_audio_url_no_sounds(self) -> None:
+        """Test that audio_url is None when sounds key is missing."""
+        raw = {
+            "word": "test",
+            "pos": "noun",
+            "senses": [],
+        }
+        entry = DictionaryEntry.from_kaikki(raw)
+        assert entry.audio_url is None
 
 
 class TestSpacyToKaikkiMapping:
