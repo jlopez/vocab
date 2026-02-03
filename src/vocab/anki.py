@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -10,7 +12,10 @@ from types import TracebackType
 
 import genanki
 
+from vocab.media_cache import fetch_media
 from vocab.pipeline import SenseAssignment
+
+logger = logging.getLogger(__name__)
 
 # CSS styling for cards
 CARD_CSS = """\
@@ -83,6 +88,7 @@ BACK_TEMPLATE = """\
 <div class="back">
   <div class="word">{{Word}}</div>
   {{#IPA}}<div class="ipa">{{IPA}}</div>{{/IPA}}
+  {{Audio}}
   {{#WordDisplay}}<div class="word-display">{{WordDisplay}}</div>{{/WordDisplay}}
   {{#Etymology}}<div class="etymology">{{Etymology}}</div>{{/Etymology}}
   {{#Examples}}<div class="examples">{{Examples}}</div>{{/Examples}}
@@ -222,11 +228,11 @@ def _format_forms(assignment: SenseAssignment) -> str:
 
 
 class AnkiDeckBuilder:
-    """Context manager for building an Anki deck.
+    """Async context manager for building an Anki deck with audio support.
 
     Usage:
-        with AnkiDeckBuilder(path, deck_name, language) as deck:
-            deck.add(sense_assignment)
+        async with AnkiDeckBuilder(path, deck_name, language) as deck:
+            await deck.add(sense_assignment)
         # Deck is written on context exit
     """
 
@@ -235,6 +241,8 @@ class AnkiDeckBuilder:
         path: Path,
         deck_name: str,
         source_language: str,
+        max_concurrent_downloads: int = 16,
+        cache_dir: Path | None = None,
     ) -> None:
         """Initialize the deck builder.
 
@@ -242,10 +250,15 @@ class AnkiDeckBuilder:
             path: Output path for the .apkg file.
             deck_name: Name for the Anki deck.
             source_language: Source language code (e.g., "fr").
+            max_concurrent_downloads: Max concurrent audio downloads (default 16).
+            cache_dir: Cache directory for audio files. Defaults to ~/.cache/vocab/media/
         """
         self._path = path
         self._deck_name = deck_name
         self._source_language = source_language
+        self._cache_dir = cache_dir
+        self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
+        self._media_files: list[str] = []
 
         # Create model and deck
         self._model = genanki.Model(
@@ -260,6 +273,7 @@ class AnkiDeckBuilder:
                 {"name": "Etymology"},
                 {"name": "Examples"},
                 {"name": "Forms"},
+                {"name": "Audio"},
             ],
             templates=[
                 {
@@ -274,12 +288,14 @@ class AnkiDeckBuilder:
         self._deck = genanki.Deck(_generate_deck_id(deck_name, source_language), deck_name)
         self._cards_added = 0
 
-    def add(self, entry: SenseAssignment) -> None:
+    async def add(self, entry: SenseAssignment) -> None:
         """Add a card for this sense assignment.
+
+        Downloads audio if available (with concurrency limiting).
 
         Creates a card with:
         - Front: English translation (from sense)
-        - Back: Word, IPA, examples, forms
+        - Back: Word, IPA, audio, examples, forms
 
         Args:
             entry: SenseAssignment to create a card from.
@@ -299,6 +315,11 @@ class AnkiDeckBuilder:
         # Use sense ID for stable GUID so updates preserve review history
         guid = _generate_note_guid(self._deck_name, self._source_language, sense.id)
 
+        # Download audio if available
+        audio = ""
+        if entry.word.audio_url:
+            audio = await self._download_audio(entry.word.audio_url, guid)
+
         note = genanki.Note(
             model=self._model,
             fields=[
@@ -310,22 +331,46 @@ class AnkiDeckBuilder:
                 etymology,
                 examples,
                 forms,
+                audio,
             ],
             guid=guid,
         )
         self._deck.add_note(note)
         self._cards_added += 1
 
+    async def _download_audio(self, url: str, guid: str) -> str:
+        """Download audio file and return Anki sound reference.
+
+        Args:
+            url: URL to download audio from.
+            guid: Card GUID to use as filename base.
+
+        Returns:
+            Anki sound reference "[sound:{filename}]" or empty string on failure.
+        """
+        filename = f"{guid}.mp3"
+        try:
+            async with self._download_semaphore:
+                path = await fetch_media(url, filename, cache_dir=self._cache_dir)
+            if path is None:
+                logger.debug("Audio not found: %s", url)
+                return ""
+            self._media_files.append(str(path))
+            return f"[sound:{filename}]"
+        except Exception:
+            logger.warning("Failed to download audio from %s", url, exc_info=True)
+            return ""
+
     @property
     def cards_added(self) -> int:
         """Return the number of cards added to the deck."""
         return self._cards_added
 
-    def __enter__(self) -> AnkiDeckBuilder:
-        """Enter context."""
+    async def __aenter__(self) -> AnkiDeckBuilder:
+        """Enter async context."""
         return self
 
-    def __exit__(
+    async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
@@ -335,4 +380,7 @@ class AnkiDeckBuilder:
         if exc_type is None:
             # Only write if no exception occurred
             package = genanki.Package(self._deck)
+            package.media_files = self._media_files
+            # Note: write_to_file is synchronous and may block the event loop
+            # for large decks. This is a genanki limitation.
             package.write_to_file(str(self._path))

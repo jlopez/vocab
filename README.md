@@ -17,7 +17,7 @@ vocab is a Python library that extracts words from ePub files, performs lemmatiz
 - Track word frequencies with original forms and example sentences
 - Dictionary lookups via Wiktionary (kaikki.org) with POS filtering
 - LLM-powered sense disambiguation for polysemous words
-- Export to Anki `.apkg` format with styled flashcards
+- Export to Anki `.apkg` format with styled flashcards and audio pronunciation
 
 ## Installation
 
@@ -179,7 +179,7 @@ async def create_anki_deck():
     vocab = build_vocabulary(Path("book.epub"), "fr", max_examples=3)
     dictionary = Dictionary("fr")
 
-    with AnkiDeckBuilder(
+    async with AnkiDeckBuilder(
         path=Path("vocabulary.apkg"),
         deck_name="French Vocabulary",
         source_language="fr",
@@ -190,15 +190,18 @@ async def create_anki_deck():
                 continue
 
             if not needs_disambiguation(enriched):
-                deck.add(assign_single_sense(enriched))
+                await deck.add(assign_single_sense(enriched))
             else:
                 for assignment in await disambiguate_senses(enriched):
-                    deck.add(assignment)
+                    await deck.add(assignment)
 
     print("Generated: vocabulary.apkg")
 
 asyncio.run(create_anki_deck())
 ```
+
+Cards include audio pronunciation when available from Wiktionary. Audio files are
+cached locally (~/.cache/vocab/media/) to avoid re-downloading.
 
 ## Development
 

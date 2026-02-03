@@ -1,7 +1,11 @@
 """Tests for the anki module."""
 
+import json
 import zipfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from vocab.anki import (
     AnkiDeckBuilder,
@@ -27,6 +31,7 @@ def make_sense_assignment(
     example_indices: list[int] | None = None,
     dict_example_text: str | None = None,
     dict_example_translation: str | None = None,
+    audio_url: str | None = None,
 ) -> SenseAssignment:
     """Create a SenseAssignment for testing."""
     if examples is None:
@@ -72,6 +77,7 @@ def make_sense_assignment(
                 example=dict_example,
             )
         ],
+        audio_url=audio_url,
     )
 
     return SenseAssignment(
@@ -333,76 +339,83 @@ class TestFormatForms:
 class TestAnkiDeckBuilder:
     """Tests for AnkiDeckBuilder class."""
 
-    def test_is_context_manager(self, tmp_path: Path) -> None:
-        """Test that AnkiDeckBuilder is a context manager."""
+    async def test_is_async_context_manager(self, tmp_path: Path) -> None:
+        """Test that AnkiDeckBuilder is an async context manager."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assert deck is not None
 
-    def test_writes_apkg_on_exit(self, tmp_path: Path) -> None:
+    async def test_writes_apkg_on_exit(self, tmp_path: Path) -> None:
         """Test that .apkg file is written on context exit."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment())
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment())
 
         assert output_path.exists()
 
-    def test_apkg_is_valid_zip(self, tmp_path: Path) -> None:
+    async def test_apkg_is_valid_zip(self, tmp_path: Path) -> None:
         """Test that .apkg file is a valid zip archive."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment())
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment())
 
         assert zipfile.is_zipfile(output_path)
 
-    def test_apkg_contains_expected_files(self, tmp_path: Path) -> None:
+    async def test_apkg_contains_expected_files(self, tmp_path: Path) -> None:
         """Test that .apkg contains expected Anki files."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment())
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment())
 
         with zipfile.ZipFile(output_path) as zf:
             names = zf.namelist()
             # Anki packages should contain these files
             assert any("collection.anki2" in n for n in names)
 
-    def test_add_increments_cards_count(self, tmp_path: Path) -> None:
+    async def test_add_increments_cards_count(self, tmp_path: Path) -> None:
         """Test that adding cards increments the count."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assert deck.cards_added == 0
-            deck.add(make_sense_assignment())
+            await deck.add(make_sense_assignment())
             assert deck.cards_added == 1
-            deck.add(make_sense_assignment(word="chat", translation="cat"))
+            await deck.add(make_sense_assignment(word="chat", translation="cat"))
             assert deck.cards_added == 2
 
-    def test_card_has_translation_on_front(self, tmp_path: Path) -> None:
+    async def test_card_has_translation_on_front(self, tmp_path: Path) -> None:
         """Test that card front contains the translation."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(translation="dog"))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(translation="dog"))
             # Check that the model has the expected template
             assert "{{Translation}}" in deck._model.templates[0]["qfmt"]
 
-    def test_card_has_word_on_back(self, tmp_path: Path) -> None:
+    async def test_card_has_word_on_back(self, tmp_path: Path) -> None:
         """Test that card back contains the word."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(word="chien"))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(word="chien"))
             # Check that the model has the expected template
             assert "{{Word}}" in deck._model.templates[0]["afmt"]
 
-    def test_card_has_ipa_on_back(self, tmp_path: Path) -> None:
+    async def test_card_has_ipa_on_back(self, tmp_path: Path) -> None:
         """Test that card back contains IPA."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(ipa="/ʃjɛ̃/"))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(ipa="/ʃjɛ̃/"))
             assert "{{IPA}}" in deck._model.templates[0]["afmt"]
 
-    def test_handles_missing_ipa(self, tmp_path: Path) -> None:
+    async def test_card_has_audio_field(self, tmp_path: Path) -> None:
+        """Test that card back contains Audio field."""
+        output_path = tmp_path / "test.apkg"
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment())
+            assert "{{Audio}}" in deck._model.templates[0]["afmt"]
+
+    async def test_handles_missing_ipa(self, tmp_path: Path) -> None:
         """Test that missing IPA is handled gracefully."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assignment = make_sense_assignment(ipa=None)  # type: ignore[arg-type]
             assignment.word = DictionaryEntry(
                 word="test",
@@ -411,53 +424,51 @@ class TestAnkiDeckBuilder:
                 etymology=None,
                 senses=[DictionarySense(id="1", translation="test", example=None)],
             )
-            deck.add(assignment)
+            await deck.add(assignment)
         assert output_path.exists()
 
-    def test_card_has_etymology_on_back(self, tmp_path: Path) -> None:
+    async def test_card_has_etymology_on_back(self, tmp_path: Path) -> None:
         """Test that card back contains etymology field."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(etymology="From Latin canis."))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(etymology="From Latin canis."))
             assert "{{Etymology}}" in deck._model.templates[0]["afmt"]
 
-    def test_handles_missing_etymology(self, tmp_path: Path) -> None:
+    async def test_handles_missing_etymology(self, tmp_path: Path) -> None:
         """Test that missing etymology is handled gracefully."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assignment = make_sense_assignment(etymology=None)
-            deck.add(assignment)
+            await deck.add(assignment)
         assert output_path.exists()
 
-    def test_does_not_write_on_exception(self, tmp_path: Path) -> None:
+    async def test_does_not_write_on_exception(self, tmp_path: Path) -> None:
         """Test that file is not written if an exception occurs."""
         output_path = tmp_path / "test.apkg"
-        try:
-            with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-                deck.add(make_sense_assignment())
+        with pytest.raises(ValueError):
+            async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+                await deck.add(make_sense_assignment())
                 raise ValueError("Test exception")
-        except ValueError:
-            pass
 
         assert not output_path.exists()
 
-    def test_handles_empty_examples(self, tmp_path: Path) -> None:
+    async def test_handles_empty_examples(self, tmp_path: Path) -> None:
         """Test that cards with no examples are created correctly."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assignment = make_sense_assignment(
                 examples=["Unused."],
                 example_indices=[],  # No examples
             )
-            deck.add(assignment)
+            await deck.add(assignment)
 
         assert output_path.exists()
         assert deck.cards_added == 1
 
-    def test_css_styling_applied(self, tmp_path: Path) -> None:
+    async def test_css_styling_applied(self, tmp_path: Path) -> None:
         """Test that CSS styling is applied to the model."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
             assert ".front" in deck._model.css
             assert ".word" in deck._model.css
             assert ".ipa" in deck._model.css
@@ -468,21 +479,129 @@ class TestAnkiDeckBuilder:
 class TestAnkiDeckBuilderMultipleCards:
     """Tests for adding multiple cards to a deck."""
 
-    def test_adds_multiple_cards(self, tmp_path: Path) -> None:
+    async def test_adds_multiple_cards(self, tmp_path: Path) -> None:
         """Test adding multiple cards to a deck."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(word="chien", translation="dog"))
-            deck.add(make_sense_assignment(word="chat", translation="cat"))
-            deck.add(make_sense_assignment(word="oiseau", translation="bird"))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(word="chien", translation="dog"))
+            await deck.add(make_sense_assignment(word="chat", translation="cat"))
+            await deck.add(make_sense_assignment(word="oiseau", translation="bird"))
 
         assert deck.cards_added == 3
 
-    def test_different_senses_same_word(self, tmp_path: Path) -> None:
+    async def test_different_senses_same_word(self, tmp_path: Path) -> None:
         """Test adding cards for different senses of the same word."""
         output_path = tmp_path / "test.apkg"
-        with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
-            deck.add(make_sense_assignment(word="faux", translation="forgery"))
-            deck.add(make_sense_assignment(word="faux", translation="scythe"))
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(word="faux", translation="forgery"))
+            await deck.add(make_sense_assignment(word="faux", translation="scythe"))
 
         assert deck.cards_added == 2
+
+
+class TestAnkiDeckBuilderAudio:
+    """Tests for audio support in AnkiDeckBuilder."""
+
+    async def test_downloads_audio_when_url_provided(self, tmp_path: Path) -> None:
+        """Test that audio is downloaded when URL is provided."""
+        output_path = tmp_path / "test.apkg"
+        cache_dir = tmp_path / "cache"
+
+        with patch("vocab.anki.fetch_media", new_callable=AsyncMock) as mock_fetch:
+            mock_audio_path = cache_dir / "ab" / "test.mp3"
+            mock_audio_path.parent.mkdir(parents=True, exist_ok=True)
+            mock_audio_path.write_bytes(b"fake audio")
+            mock_fetch.return_value = mock_audio_path
+
+            async with AnkiDeckBuilder(output_path, "Test Deck", "fr", cache_dir=cache_dir) as deck:
+                await deck.add(make_sense_assignment(audio_url="https://example.com/audio.mp3"))
+
+            mock_fetch.assert_called_once()
+            # Verify media file is tracked
+            assert len(deck._media_files) == 1
+
+    async def test_audio_field_contains_sound_reference(self, tmp_path: Path) -> None:
+        """Test that audio field contains [sound:...] reference."""
+        output_path = tmp_path / "test.apkg"
+        cache_dir = tmp_path / "cache"
+
+        with patch("vocab.anki.fetch_media", new_callable=AsyncMock) as mock_fetch:
+            mock_audio_path = cache_dir / "ab" / "test.mp3"
+            mock_audio_path.parent.mkdir(parents=True, exist_ok=True)
+            mock_audio_path.write_bytes(b"fake audio")
+            mock_fetch.return_value = mock_audio_path
+
+            async with AnkiDeckBuilder(output_path, "Test Deck", "fr", cache_dir=cache_dir) as deck:
+                await deck.add(make_sense_assignment(audio_url="https://example.com/audio.mp3"))
+
+                # Check the note's audio field
+                notes = deck._deck.notes
+                assert len(notes) == 1
+                audio_field = notes[0].fields[8]  # Audio is the 9th field
+                assert audio_field.startswith("[sound:")
+                assert audio_field.endswith(".mp3]")
+
+    async def test_card_works_without_audio_url(self, tmp_path: Path) -> None:
+        """Test that cards work when no audio URL is provided."""
+        output_path = tmp_path / "test.apkg"
+
+        async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+            await deck.add(make_sense_assignment(audio_url=None))
+
+        assert output_path.exists()
+        assert deck.cards_added == 1
+
+    async def test_card_works_when_audio_download_fails(self, tmp_path: Path) -> None:
+        """Test that cards work when audio download fails."""
+        output_path = tmp_path / "test.apkg"
+
+        with patch("vocab.anki.fetch_media", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.side_effect = Exception("Download failed")
+
+            async with AnkiDeckBuilder(output_path, "Test Deck", "fr") as deck:
+                await deck.add(make_sense_assignment(audio_url="https://example.com/audio.mp3"))
+
+            # Card should still be created
+            assert deck.cards_added == 1
+            # Audio field should be empty
+            notes = deck._deck.notes
+            audio_field = notes[0].fields[8]
+            assert audio_field == ""
+
+    async def test_apkg_contains_media_files(self, tmp_path: Path) -> None:
+        """Test that .apkg contains audio files."""
+        output_path = tmp_path / "test.apkg"
+        cache_dir = tmp_path / "cache"
+
+        with patch("vocab.anki.fetch_media", new_callable=AsyncMock) as mock_fetch:
+            mock_audio_path = cache_dir / "ab" / "test.mp3"
+            mock_audio_path.parent.mkdir(parents=True, exist_ok=True)
+            mock_audio_path.write_bytes(b"fake audio content")
+            mock_fetch.return_value = mock_audio_path
+
+            async with AnkiDeckBuilder(output_path, "Test Deck", "fr", cache_dir=cache_dir) as deck:
+                await deck.add(make_sense_assignment(audio_url="https://example.com/audio.mp3"))
+
+        # Check the apkg contains the media file
+        with zipfile.ZipFile(output_path) as zf:
+            # Anki packages store a "media" JSON file mapping numeric keys to filenames
+            assert "media" in zf.namelist()
+            media_manifest = json.loads(zf.read("media"))
+            assert len(media_manifest) == 1
+            # The manifest should map to a .mp3 filename
+            filename = list(media_manifest.values())[0]
+            assert filename.endswith(".mp3")
+            # The actual media content should be present (stored with numeric key)
+            media_key = list(media_manifest.keys())[0]
+            content = zf.read(media_key)
+            assert content == b"fake audio content"
+
+    async def test_concurrency_limit_parameter(self, tmp_path: Path) -> None:
+        """Test that max_concurrent_downloads parameter is respected."""
+        output_path = tmp_path / "test.apkg"
+
+        async with AnkiDeckBuilder(
+            output_path, "Test Deck", "fr", max_concurrent_downloads=4
+        ) as deck:
+            # Verify semaphore is set up with correct value
+            assert deck._download_semaphore._value == 4

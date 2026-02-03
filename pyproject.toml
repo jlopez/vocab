@@ -32,6 +32,8 @@ dev = [
     "pytest-cov>=6.0.0",
     "python-dotenv>=1.2.1",
     "ruff>=0.14.14",
+    "tqdm>=4.67.2",
+    "types-tqdm>=4.67.2.20260202",
 ]
 
 [tool.pyright]
