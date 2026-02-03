@@ -72,5 +72,7 @@ When fully implemented and code reviewed:
 1. Run final quality checks (ruff, mypy, pytest)
 2. Verify README.md accuracy (features, examples, coverage badge, architecture)
 3. Check plan.md for info to preserve (decisions → docstrings, future work → Issues)
-4. Suggest CHANGELOG.md if project will be versioned; otherwise keep docs minimal
-5. Delete `docs/plan.md` and empty `docs/` directory
+4. Squash all phase commits into a single commit:
+   - Use `git reset --soft <commit-before-first-phase>`
+   - Write a commit message describing the feature as a whole (not individual phases)
+   - The message should explain what the feature does and key implementation details
