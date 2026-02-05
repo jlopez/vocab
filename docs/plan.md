@@ -1,142 +1,216 @@
-# Audio Support for Anki Cards
+# CLI Implementation
 
 ## Overview
 
-Add audio playback to generated Anki cards by extracting audio URLs from kaikki dictionary data and embedding MP3 files in the `.apkg` package.
+Add a CLI (`vocab build`) using typer that runs the full epub-to-Anki pipeline with
+configurable parameters and optional intermediate artifact output.
 
-## Architecture
-
-### Data Flow
-
-```
-kaikki sounds[] → DictionaryEntry.audio_url → AnkiDeckBuilder.add() → download MP3 → embed in .apkg
-```
-
-### Key Decisions
+### Key Design Decisions
 
 | Decision | Resolution |
 |----------|------------|
-| Audio format | MP3 (universal Anki support) |
-| Which audio | First `mp3_url` in kaikki `sounds[]` |
-| Filename | `{card_guid}.mp3` |
-| URL streaming | Not viable - must embed files |
-| Download strategy | Async with semaphore-limited concurrency |
-| Concurrency limit | 16 concurrent downloads (configurable) |
-| Caching | `~/.cache/vocab/audio/` to avoid re-downloads |
-| Error handling | Log warning, card works without audio |
-| Replay | Built-in Anki behavior (R or F5 hotkey) |
+| CLI framework | typer (with rich for progress output) |
+| Entry point | `vocab` → `src/vocab/cli.py:app` |
+| Subcommand | `build` — runs full epub→Anki pipeline |
+| Vocabulary building | New `VocabularyBuilder` class (builder pattern, no context manager) |
+| Artifact output | Null object pattern: `ArtifactWriter` / `NullArtifactWriter` |
+| Artifact naming | Numbered prefixes (`01-chapters.jsonl`, `02-sentences.jsonl`, ...) |
+| POS filtering | Applied before `--top` so top-N reflects useful cards only |
+| .env loading | `python-dotenv` loads `ANTHROPIC_API_KEY` at CLI startup |
+
+### CLI Interface
+
+```
+vocab build EPUB -l LANG [OPTIONS]
+```
+
+| Parameter | Short | Default | Description |
+|-----------|-------|---------|-------------|
+| `EPUB` | | (required) | Path to input epub file |
+| `--language` | `-l` | (required) | 2-letter language code |
+| `--output` | `-o` | `{epub_stem}.apkg` | Output .apkg path |
+| `--deck-name` | `-d` | `"{Language} Vocabulary"` | Anki deck name |
+| `--artifacts` | | (disabled) | Directory for intermediate artifacts |
+| `--top` | `-t` | (all) | Limit to N most frequent lemmas |
+| `--max-examples` | `-n` | 3 | Max example sentences per lemma |
+| `--pos` | | `NOUN,VERB,ADJ,ADV` | Comma-separated POS tags to include |
+| `--model` | `-m` | `claude-haiku` | LLM model for disambiguation |
+| `--no-audio` | | false | Skip audio downloads |
+| `--no-disambiguation` | | false | Skip LLM disambiguation step |
+
+### Artifact Files
+
+When `--artifacts DIR` is provided:
+
+```
+DIR/
+  01-chapters.jsonl
+  02-sentences.jsonl
+  03-tokens.jsonl
+  04-vocabulary.json
+  05-enriched.jsonl
+  05-rejected.jsonl
+  06-assigned.jsonl
+  06-ambiguous.jsonl
+  07-disambiguated.jsonl
+  07-failed.jsonl
+```
+
+### Pipeline Flow
+
+```
+epub → extract_chapters → extract_sentences → extract_tokens → VocabularyBuilder
+  → enrich_lemma (POS filter + top-N) → triage (needs_disambiguation?)
+  → assign_single_sense / disambiguate_senses → AnkiDeckBuilder → .apkg
+```
 
 ---
 
-## Phase 1: Data Model
+## Phase 1: VocabularyBuilder Refactor
 
-Add audio URL extraction to the dictionary layer.
+Extract the token accumulation logic from `build_vocabulary()` into a standalone
+`VocabularyBuilder` class with `add()` and `build()` methods.
 
 ### Changes
 
-**src/vocab/dictionary.py**
-- Add `audio_url: str | None` field to `DictionaryEntry`
-- Add `_extract_audio_url()` static method that returns first `mp3_url` from `sounds[]`
-- Update `from_kaikki()` to call the new extractor
+**src/vocab/vocabulary.py**
+- Add `VocabularyBuilder` class:
+  ```python
+  class VocabularyBuilder:
+      def __init__(self, language: str, max_examples: int = 3): ...
+      def add(self, token: Token) -> None: ...
+      def build(self) -> Vocabulary: ...
+  ```
+  - `add()` encapsulates: frequency counting, form tracking, example collection, POS skip
+  - `build()` converts accumulated state into a `Vocabulary` object
+- Refactor `build_vocabulary()` to use `VocabularyBuilder` internally
 
-**tests/test_dictionary.py**
-- Add test for `_extract_audio_url()` with various sound configurations:
-  - Entry with multiple audio files (returns first mp3_url)
-  - Entry with only IPA (no audio) → returns None
-  - Entry with ogg_url but no mp3_url → returns None
-  - Empty sounds array → returns None
+**src/vocab/__init__.py**
+- Export `VocabularyBuilder`
+
+**tests/test_vocabulary.py**
+- Add tests for `VocabularyBuilder`:
+  - `add()` accumulates tokens correctly
+  - `build()` produces identical output to current `build_vocabulary()`
+  - `max_examples` limit is respected
+  - Empty builder produces empty vocabulary
 
 ### Acceptance Criteria
 
-- [x] `DictionaryEntry` has `audio_url: str | None` field
-- [x] First available `mp3_url` is extracted from kaikki data
-- [x] Entries without audio have `audio_url=None`
-- [x] All tests pass, ruff/mypy clean
+- [x] `VocabularyBuilder` class with `add()` and `build()` methods
+- [x] `build_vocabulary()` reimplemented as thin wrapper around `VocabularyBuilder`
+- [x] Existing tests continue to pass unchanged
+- [x] New unit tests for `VocabularyBuilder`
+- [x] ruff, mypy, pytest pass
 
 ---
 
-## Phase 2: Media Cache Module
+## Phase 2: Artifacts System
 
-Create a reusable module for downloading and caching media files.
+Create the artifact writer classes using the null object pattern.
 
 ### Changes
 
-**src/vocab/media_cache.py** (new file)
-- `DEFAULT_CACHE_DIR = Path.home() / ".cache" / "vocab" / "media"`
-- `async def fetch_media(url: str, filename: str, cache_dir: Path | None = None) -> Path`
-  - Computes tiered path: `{cache_dir}/{filename[:2]}/{filename}`
-  - Returns cached path immediately if file exists
-  - Downloads via `httpx.AsyncClient` if not cached
-  - Creates parent directories as needed
-  - Returns the local file path
-- Uses tiered directory structure to avoid filesystem slowdown with many files
+**src/vocab/artifacts.py** (new)
+- `ArtifactWriter` — context manager that writes numbered JSONL/JSON files:
+  - `__init__(self, directory: Path)` — creates directory, opens file handles
+  - `__enter__` / `__exit__` — manages file handle lifecycle
+  - `write_chapter(chapter)` → `01-chapters.jsonl`
+  - `write_sentence(chapter, sentence)` → `02-sentences.jsonl`
+  - `write_token(token)` → `03-tokens.jsonl`
+  - `write_vocabulary(vocab)` → `04-vocabulary.json`
+  - `write_enriched(enriched)` → `05-enriched.jsonl`
+  - `write_rejected(entry)` → `05-rejected.jsonl`
+  - `write_assigned(assignment)` → `06-assigned.jsonl`
+  - `write_ambiguous(enriched)` → `06-ambiguous.jsonl`
+  - `write_disambiguated(assignment)` → `07-disambiguated.jsonl`
+  - `write_failed(enriched)` → `07-failed.jsonl`
+- `NullArtifactWriter` — same interface, all methods are no-ops
+  - Also a context manager (enter/exit do nothing)
 
-**tests/test_media_cache.py** (new file)
-- Test successful download and caching
-- Test cache hit (no network request on second call)
-- Test tiered directory structure (`ab/abcdef.mp3`)
-- Test download failure raises appropriate exception
-- Test custom cache_dir parameter
+**src/vocab/__init__.py**
+- Export `ArtifactWriter`, `NullArtifactWriter`
+
+**tests/test_artifacts.py** (new)
+- `ArtifactWriter` creates directory and writes correct files
+- Each `write_*` method produces valid JSONL/JSON
+- `NullArtifactWriter` writes nothing, works as context manager
+- Files are properly closed on `__exit__`
 
 ### Acceptance Criteria
 
-- [x] `fetch_media()` downloads and caches files
-- [x] Tiered directory structure: `{cache_dir}/{filename[:2]}/{filename}`
-- [x] Cache hits skip network requests
-- [x] All tests pass, ruff/mypy clean
+- [x] `ArtifactWriter` writes all 10 artifact files with correct numbering
+- [x] `NullArtifactWriter` is a drop-in replacement that writes nothing
+- [x] Both work as context managers
+- [x] ruff, mypy, pytest pass
 
 ---
 
-## Phase 3: Async Anki Builder with Audio
+## Phase 3: CLI Implementation
 
-Make `AnkiDeckBuilder` async and integrate audio download/embedding.
+Create the typer CLI with the `build` subcommand wiring the full pipeline together.
 
 ### Changes
 
-**src/vocab/anki.py**
-- Convert `AnkiDeckBuilder` to async context manager (`__aenter__`/`__aexit__`)
-- Add `max_concurrent_downloads: int = 16` constructor parameter
-- Add `_download_semaphore: asyncio.Semaphore` instance variable
-- Add `_media_files: list[str]` to track downloaded audio paths
-- Convert `add()` to `async def add()`:
-  - If `entry.word.audio_url` exists:
-    - Compute filename as `{guid}.mp3`
-    - Acquire semaphore, call `fetch_media()` from `media_cache` module
-    - Add path to `_media_files`
-    - Set `Audio` field to `[sound:{filename}]`
-  - Handle download failures gracefully (log warning, continue without audio)
-  - Add note to deck (unchanged)
-- Update `__aexit__` to pass `media_files` to `genanki.Package`
-- Add `Audio` field to model fields list
-- Update `BACK_TEMPLATE` to include `{{Audio}}` near the word/IPA
+**src/vocab/cli.py** (new)
+- `app = typer.Typer()` with `@app.command("build")`
+- Loads `.env` via `python-dotenv`
+- Implements the full pipeline:
+  1. Initialize `VocabularyBuilder` + artifact writer
+  2. Triple loop: chapters → sentences → tokens (with artifact output)
+  3. Build vocabulary, apply POS filter, apply top-N
+  4. Enrich with dictionary
+  5. Triage ambiguous/unambiguous
+  6. Disambiguate (unless `--no-disambiguation`)
+  7. Build Anki deck (with or without audio)
+- Progress output via rich/typer (card count, stage indicators)
+- Early validation: check epub exists, language supported, API key present if needed
 
-**tests/test_anki.py**
-- Update existing tests to use `async with` and `await deck.add()`
-- Add test for audio download and embedding:
-  - Mock `fetch_media` to return a path
-  - Verify `[sound:...]` appears in card field
-  - Verify media file is included in package
-- Add test for missing audio URL (card still works)
-- Add test for download failure (logs warning, card still works)
+**pyproject.toml**
+- Add dependencies: `typer>=0.15`
+- Move `python-dotenv` from dev to regular dependencies
+- Add entry point: `[project.scripts] vocab = "vocab.cli:app"`
+
+**tests/test_cli.py** (new)
+- Test CLI argument parsing and validation
+- Test full pipeline with mocked dependencies (no real epub/API calls)
+- Test `--no-disambiguation` skips LLM step
+- Test `--artifacts` triggers artifact writing
+- Test default values for output path and deck name
+
+### Acceptance Criteria
+
+- [x] `vocab build book.epub -l fr` runs the full pipeline
+- [x] All CLI options work as specified
+- [x] `--artifacts dir/` writes all numbered artifact files
+- [x] `--no-disambiguation` works without API key
+- [x] `--no-audio` skips audio downloads
+- [x] Early validation with clear error messages
+- [x] Running CLI with `--artifacts` against the same epub/language as `data/phaseN.py` produces artifacts identical to those in `data/` (phases 1–6; phase 7 is non-deterministic due to LLM)
+- [x] ruff, mypy, pytest pass with coverage ≥ 90%
+
+---
+
+## Phase 4: README Update
+
+Update documentation to reflect the new CLI and refactored API.
+
+### Changes
 
 **README.md**
-- Update "Export to Anki" example to use `async with` and `await`
-- Mention audio support in Features section
+- Add CLI section (installation, usage examples):
+  - Minimal usage
+  - Full control with all options
+  - Quick mode (no LLM, no audio)
+  - Artifacts mode for debugging
+- Update Architecture table to include CLI layer
+- Add `VocabularyBuilder` to usage examples or at least mention it
+- Update coverage badge if needed
+- Verify all existing examples still accurate
 
 ### Acceptance Criteria
 
-- [x] `AnkiDeckBuilder` is an async context manager
-- [x] `add()` is async and downloads audio with concurrency limit (default 16)
-- [x] Audio downloaded via `media_cache.fetch_media()`
-- [x] Cards include `[sound:{guid}.mp3]` when audio available
-- [x] Cards work normally when audio unavailable or download fails
-- [x] All tests pass, ruff/mypy clean, coverage maintained
-- [x] README updated with async usage
-
----
-
-## Future Considerations (Out of Scope)
-
-- Multiple audio files per card (random selection would require JS)
-- Audio quality preferences (some kaikki entries have multiple recordings)
-- Offline mode / pre-download all audio for a language
+- [x] CLI documented with practical usage examples
+- [x] Architecture table updated
+- [x] Coverage badge accurate
+- [x] All examples in README are correct and runnable

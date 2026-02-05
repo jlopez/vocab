@@ -1,6 +1,7 @@
 """Vocabulary extraction from ePub files."""
 
 from vocab.anki import AnkiDeckBuilder
+from vocab.artifacts import ArtifactWriter, NullArtifactWriter
 from vocab.dictionary import (
     SPACY_TO_KAIKKI,
     Dictionary,
@@ -28,10 +29,11 @@ from vocab.pipeline import (
 )
 from vocab.sentences import SpacyModelNotFoundError, extract_sentences
 from vocab.tokens import extract_tokens
-from vocab.vocabulary import build_vocabulary
+from vocab.vocabulary import VocabularyBuilder, build_vocabulary
 
 __all__ = [
     "AnkiDeckBuilder",
+    "ArtifactWriter",
     "Chapter",
     "Dictionary",
     "DictionaryEntry",
@@ -40,6 +42,7 @@ __all__ = [
     "EnrichedLemma",
     "Example",
     "LemmaEntry",
+    "NullArtifactWriter",
     "SPACY_TO_KAIKKI",
     "Sentence",
     "SenseAssignment",
@@ -47,6 +50,7 @@ __all__ = [
     "SpacyModelNotFoundError",
     "Token",
     "Vocabulary",
+    "VocabularyBuilder",
     "assign_single_sense",
     "build_vocabulary",
     "disambiguate_senses",

@@ -58,7 +58,7 @@ LANGUAGE_NAMES: dict[str, str] = {
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "vocab"
 
 # Head template names to extract word_display from
-SUPPORTED_HEAD_TEMPLATES: set[str] = {"fr-noun"}
+SUPPORTED_HEAD_TEMPLATES: set[str] = {"fr-noun", "de-noun"}
 
 
 @dataclass
