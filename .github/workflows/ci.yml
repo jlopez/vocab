@@ -81,6 +81,8 @@ jobs:
 
       - name: Run tests with coverage
         run: uv run pytest --cov-report=term --cov-report=json
+        env:
+          _TYPER_FORCE_DISABLE_TERMINAL: "1"
 
       - name: Upload coverage reports
         if: matrix.python-version == '3.12' && github.event_name == 'push' && github.ref == 'refs/heads/main'
