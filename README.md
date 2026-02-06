@@ -1,6 +1,6 @@
 # vocab
 
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)
 
 Extract vocabulary with frequency data from ePub files for language learning.
 
@@ -18,6 +18,42 @@ vocab is a Python library that extracts words from ePub files, performs lemmatiz
 - Dictionary lookups via Wiktionary (kaikki.org) with POS filtering
 - LLM-powered sense disambiguation for polysemous words
 - Export to Anki `.apkg` format with styled flashcards and audio pronunciation
+- CLI tool for end-to-end pipeline execution with optional intermediate artifacts
+
+## CLI
+
+The `vocab` command runs the full pipeline from ePub to Anki deck:
+
+```bash
+# Basic usage (requires ANTHROPIC_API_KEY in .env or environment)
+vocab build book.epub -l fr
+
+# Full control
+vocab build book.epub -l fr -o my-deck.apkg -d "Mon Vocabulaire" \
+  --top 200 --max-examples 5 --model claude-sonnet
+
+# Quick mode — no LLM, no audio
+vocab build book.epub -l fr --no-disambiguation --no-audio
+
+# With intermediate artifacts for debugging
+vocab build book.epub -l fr --artifacts ./debug/
+```
+
+### Options
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `EPUB` | | (required) | Path to input ePub file |
+| `--language` | `-l` | (required) | 2-letter language code |
+| `--output` | `-o` | `{epub_stem}.apkg` | Output .apkg path |
+| `--deck-name` | `-d` | `"{Language} Vocabulary"` | Anki deck name |
+| `--artifacts` | | (disabled) | Directory for intermediate pipeline artifacts |
+| `--top` | `-t` | (all) | Limit to N most frequent lemmas |
+| `--max-examples` | `-n` | 3 | Max example sentences per lemma |
+| `--pos` | | `NOUN,VERB,ADJ,ADV` | Comma-separated POS tags |
+| `--model` | `-m` | `claude-haiku` | LLM model for disambiguation |
+| `--no-audio` | | | Skip audio downloads |
+| `--no-disambiguation` | | | Skip LLM step (no API key needed) |
 
 ## Installation
 
@@ -93,8 +129,9 @@ from vocab import build_vocabulary
 # Build vocabulary from an ePub (max_examples must be >= 0)
 vocab = build_vocabulary(Path("book.epub"), "fr", max_examples=3)
 
-# Get the top 10 most frequent lemmas (n must be >= 1)
-for entry in vocab.top(10):
+# Iterate over all lemma entries sorted by frequency
+entries = sorted(vocab, key=lambda e: e.frequency, reverse=True)
+for entry in entries[:10]:
     print(f"{entry.lemma}: {entry.frequency} occurrences")
     print(f"  Forms: {entry.forms}")
     if entry.examples:
@@ -184,7 +221,7 @@ async def create_anki_deck():
         deck_name="French Vocabulary",
         source_language="fr",
     ) as deck:
-        for lemma_entry in vocab.top(100):
+        for lemma_entry in sorted(vocab, key=lambda e: e.frequency, reverse=True)[:100]:
             enriched = enrich_lemma(lemma_entry, dictionary)
             if not enriched:
                 continue
@@ -238,10 +275,12 @@ The library is built as a layered pipeline:
 | L0 | `epub.py` | `extract_chapters()` | ePub → chapters with text |
 | L1 | `sentences.py` | `extract_sentences()` | Text → sentences (spaCy) |
 | L2 | `tokens.py` | `extract_tokens()` | Sentences → lemmatized tokens |
-| L3 | `vocabulary.py` | `build_vocabulary()` | Tokens → frequency data |
+| L3 | `vocabulary.py` | `VocabularyBuilder`, `build_vocabulary()` | Tokens → frequency data |
 | L4 | `dictionary.py` | `Dictionary.lookup()` | Wiktionary lookups (kaikki.org) |
 | L5 | `pipeline.py` | `enrich_lemma()`, `disambiguate_senses()` | Enrichment + LLM disambiguation |
 | L6 | `anki.py` | `AnkiDeckBuilder` | Export to Anki `.apkg` format |
+| | `artifacts.py` | `ArtifactWriter`, `NullArtifactWriter` | Intermediate pipeline artifacts |
+| | `cli.py` | `vocab build` | CLI entry point |
 
 ## License
 

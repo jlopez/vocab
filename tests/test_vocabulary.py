@@ -11,7 +11,7 @@ import pytest
 from ebooklib import epub
 
 from vocab.models import Example, LemmaEntry, SentenceLocation, Token, Vocabulary
-from vocab.vocabulary import SKIP_POS, build_vocabulary
+from vocab.vocabulary import SKIP_POS, VocabularyBuilder, build_vocabulary
 
 
 @contextmanager
@@ -565,3 +565,148 @@ class TestSkipEmptyPos:
         assert "chat" in vocab.entries
         # "unknown" should NOT be in vocabulary (empty POS)
         assert "unknown" not in vocab.entries
+
+
+class TestVocabularyBuilder:
+    """Tests for VocabularyBuilder class."""
+
+    def test_empty_builder_produces_empty_vocabulary(self) -> None:
+        """Empty builder should produce a Vocabulary with no entries."""
+        builder = VocabularyBuilder(language="fr")
+        vocab = builder.build()
+
+        assert isinstance(vocab, Vocabulary)
+        assert vocab.language == "fr"
+        assert len(vocab.entries) == 0
+
+    def test_add_single_token(self) -> None:
+        """Adding a single token should produce correct vocabulary entry."""
+        builder = VocabularyBuilder(language="fr")
+        location = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        token = create_mock_token("chat", "NOUN", "chat", "Le chat dort.", location)
+
+        builder.add(token)
+        vocab = builder.build()
+
+        assert "chat" in vocab.entries
+        assert "NOUN" in vocab.entries["chat"]
+        entry = vocab.entries["chat"]["NOUN"]
+        assert entry.frequency == 1
+        assert entry.forms == {"chat": 1}
+        assert len(entry.examples) == 1
+        assert entry.examples[0].sentence == "Le chat dort."
+
+    def test_add_tracks_frequency(self) -> None:
+        """Multiple tokens with same lemma/POS should increment frequency."""
+        builder = VocabularyBuilder(language="fr")
+        loc0 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        loc1 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=1)
+
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc0))
+        builder.add(create_mock_token("chat", "NOUN", "chats", "Les chats mangent.", loc1))
+        vocab = builder.build()
+
+        assert vocab.entries["chat"]["NOUN"].frequency == 2
+
+    def test_add_tracks_forms(self) -> None:
+        """Different original forms of same lemma should be tracked."""
+        builder = VocabularyBuilder(language="fr")
+        loc0 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        loc1 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=1)
+
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc0))
+        builder.add(create_mock_token("chat", "NOUN", "chats", "Les chats mangent.", loc1))
+        vocab = builder.build()
+
+        forms = vocab.entries["chat"]["NOUN"].forms
+        assert forms == {"chat": 1, "chats": 1}
+
+    def test_max_examples_respected(self) -> None:
+        """Should not collect more than max_examples examples."""
+        builder = VocabularyBuilder(language="fr", max_examples=2)
+
+        for i in range(5):
+            loc = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=i)
+            builder.add(create_mock_token("chat", "NOUN", "chat", f"Sentence {i}.", loc))
+        vocab = builder.build()
+
+        assert len(vocab.entries["chat"]["NOUN"].examples) == 2
+
+    def test_max_examples_zero(self) -> None:
+        """max_examples=0 should collect no examples."""
+        builder = VocabularyBuilder(language="fr", max_examples=0)
+        loc = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc))
+        vocab = builder.build()
+
+        assert len(vocab.entries["chat"]["NOUN"].examples) == 0
+
+    def test_max_examples_negative_raises(self) -> None:
+        """Negative max_examples should raise ValueError."""
+        with pytest.raises(ValueError, match="max_examples must be >= 0"):
+            VocabularyBuilder(language="fr", max_examples=-1)
+
+    def test_duplicate_sentence_not_added(self) -> None:
+        """Same sentence appearing twice should only be added once as example."""
+        builder = VocabularyBuilder(language="fr", max_examples=10)
+        loc = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc))
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc))
+        vocab = builder.build()
+
+        assert len(vocab.entries["chat"]["NOUN"].examples) == 1
+
+    def test_skip_empty_pos(self) -> None:
+        """Tokens with empty POS should be skipped."""
+        builder = VocabularyBuilder(language="fr")
+        loc = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        builder.add(create_mock_token("unknown", "", "unknown", "Text.", loc))
+        vocab = builder.build()
+
+        assert len(vocab.entries) == 0
+
+    def test_same_lemma_different_pos(self) -> None:
+        """Same lemma with different POS should create separate entries."""
+        builder = VocabularyBuilder(language="fr")
+        loc0 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        loc1 = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=1)
+
+        builder.add(create_mock_token("run", "NOUN", "run", "A good run.", loc0))
+        builder.add(create_mock_token("run", "VERB", "run", "I run fast.", loc1))
+        vocab = builder.build()
+
+        assert "NOUN" in vocab.entries["run"]
+        assert "VERB" in vocab.entries["run"]
+        assert vocab.entries["run"]["NOUN"].frequency == 1
+        assert vocab.entries["run"]["VERB"].frequency == 1
+
+    def test_example_location_preserved(self) -> None:
+        """Example locations should match the token locations."""
+        builder = VocabularyBuilder(language="fr")
+        loc = SentenceLocation(chapter_index=2, chapter_title="Ch 3", sentence_index=5)
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc))
+        vocab = builder.build()
+
+        example = vocab.entries["chat"]["NOUN"].examples[0]
+        assert example.location.chapter_index == 2
+        assert example.location.chapter_title == "Ch 3"
+        assert example.location.sentence_index == 5
+
+    def test_add_after_build_raises(self) -> None:
+        """Calling add() after build() should raise RuntimeError."""
+        builder = VocabularyBuilder(language="fr")
+        loc = SentenceLocation(chapter_index=0, chapter_title="Test", sentence_index=0)
+        builder.add(create_mock_token("chat", "NOUN", "chat", "Le chat dort.", loc))
+        builder.build()
+
+        with pytest.raises(RuntimeError, match="Cannot add tokens after build"):
+            builder.add(create_mock_token("chien", "NOUN", "chien", "Le chien dort.", loc))
+
+    def test_build_twice_raises(self) -> None:
+        """Calling build() twice should raise RuntimeError."""
+        builder = VocabularyBuilder(language="fr")
+        builder.build()
+
+        with pytest.raises(RuntimeError, match="build\\(\\) has already been called"):
+            builder.build()

@@ -243,6 +243,7 @@ class AnkiDeckBuilder:
         source_language: str,
         max_concurrent_downloads: int = 16,
         cache_dir: Path | None = None,
+        skip_audio: bool = False,
     ) -> None:
         """Initialize the deck builder.
 
@@ -252,11 +253,13 @@ class AnkiDeckBuilder:
             source_language: Source language code (e.g., "fr").
             max_concurrent_downloads: Max concurrent audio downloads (default 16).
             cache_dir: Cache directory for audio files. Defaults to ~/.cache/vocab/media/
+            skip_audio: If True, skip audio downloads even when URLs are available.
         """
         self._path = path
         self._deck_name = deck_name
         self._source_language = source_language
         self._cache_dir = cache_dir
+        self._skip_audio = skip_audio
         self._download_semaphore = asyncio.Semaphore(max_concurrent_downloads)
         self._media_files: list[str] = []
 
@@ -317,7 +320,7 @@ class AnkiDeckBuilder:
 
         # Download audio if available
         audio = ""
-        if entry.word.audio_url:
+        if entry.word.audio_url and not self._skip_audio:
             audio = await self._download_audio(entry.word.audio_url, guid)
 
         note = genanki.Note(
